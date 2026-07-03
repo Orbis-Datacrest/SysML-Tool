@@ -46,14 +46,17 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .tool-icon { width: 22px; height: 22px; display: inline-grid; place-items: center; border: 1px solid #526279; border-radius: 4px; color: #d7eadb; background: #26364d; font-size: 11px; font-weight: 700; }
 .nav-title { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 8px; }
 .nav-row { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 8px; text-align: left; }
-.diagram-node { position: absolute; width: 180px; min-height: 96px; border: 1px solid #26351f; background: var(--node); color: var(--node-ink); box-shadow: 0 12px 30px rgb(0 0 0 / 30%); border-radius: 2px; overflow: hidden; user-select: none; }
-.diagram-node.selected { outline: 3px solid var(--accent-2); }
-.node-title { padding: 8px 10px; border-bottom: 1px solid #879c87; background: #c3dcc8; font-weight: 800; }
-.node-body { padding: 8px 10px; font-size: 12px; color: #18261d; }
+.diagram-node { position: absolute; width: 180px; min-height: 60px; border: var(--node-border-width, 1px) solid var(--node-border, #26351f); background: var(--node-fill, var(--node)); color: var(--node-ink); box-shadow: 0 12px 30px rgb(0 0 0 / 30%); border-radius: 3px; overflow: visible; user-select: none; touch-action: none; font-weight: var(--node-font-weight, 400); }
+.diagram-node.selected { outline: 3px solid var(--accent-2); outline-offset: 2px; box-shadow: 0 0 0 6px rgb(90 167 255 / 14%), 0 12px 30px rgb(0 0 0 / 30%); }
+.diagram-node.locked { cursor: not-allowed; }
+.node-title { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, var(--node-border, #26351f), transparent 35%); background: color-mix(in srgb, var(--node-fill, var(--node)), #000 8%); font-weight: 800; overflow: hidden; }
+.node-body { padding: 8px 10px; font-size: 12px; color: #18261d; overflow: hidden; }
+.lock-indicator { float: right; margin: 4px 0 0 8px; color: #4d6078; font-size: 8px; }
 .connector-handle { position: absolute; top: 50%; width: 12px; height: 12px; border: 2px solid #102016; border-radius: 999px; background: #f5f9f2; transform: translateY(-50%); z-index: 4; }
 .connector-handle:hover { background: var(--accent); box-shadow: 0 0 0 6px rgb(57 184 168 / 20%); cursor: crosshair; }
 .connector-out { right: -7px; }
 .connector-in { left: -7px; pointer-events: none; }
+.resize-handle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border: 2px solid white; border-radius: 3px; background: var(--accent-2); cursor: nwse-resize; z-index: 5; }
 .relationship-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .relationship-hit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
 .relationship-line { fill: none; stroke: #9aa8bb; stroke-width: 2; pointer-events: none; }
@@ -61,9 +64,24 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .relationship-label { fill: #c5d0df; font-size: 12px; text-anchor: middle; pointer-events: all; cursor: pointer; }
 .relationship-label.selected { fill: var(--warning); font-weight: 700; }
 .relationship-preview { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 8 6; pointer-events: none; }
-.canvas-toolbar { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; z-index: 10; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: rgb(8 12 19 / 88%); backdrop-filter: blur(10px); }
+.canvas-toolbar { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; z-index: 20; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: rgb(8 12 19 / 88%); backdrop-filter: blur(10px); }
 .canvas-toolbar select { max-width: 190px; }
 .toolbar-hint { display: flex; align-items: center; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.format-toolbar { position: absolute; top: 68px; left: 12px; display: flex; align-items: center; gap: 8px; z-index: 20; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: rgb(8 12 19 / 92%); box-shadow: 0 8px 24px rgb(0 0 0 / 30%); }
+.format-toolbar label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.format-toolbar input[type="color"] { width: 28px; height: 26px; padding: 2px; }
+.format-toolbar select { width: 66px; padding: 4px; }
+.format-button { width: 30px; height: 28px; padding: 0; }
+.format-button.active { border-color: var(--accent-2); background: #243d61; }
+#canvas-plane { position: absolute; inset: 0; transform-origin: 0 0; touch-action: none; }
+.selection-marquee { position: absolute; z-index: 9; border: 1px solid var(--accent-2); background: rgb(90 167 255 / 14%); pointer-events: none; }
+.canvas-context-menu { position: absolute; z-index: 40; display: grid; width: 206px; padding: 6px; border: 1px solid #34445d; border-radius: 9px; background: #111a28; box-shadow: 0 18px 45px rgb(0 0 0 / 50%); }
+.canvas-context-menu button { display: flex; justify-content: space-between; border: 0; padding: 8px 9px; background: transparent; text-align: left; }
+.canvas-context-menu button:hover { background: #202c43; }
+.canvas-context-menu .context-danger { color: var(--danger); }
+.canvas-context-menu .context-danger:hover { background: #351821; }
+.canvas-context-menu kbd { color: var(--muted); font: 10px/1.5 inherit; }
+.context-separator { height: 1px; margin: 4px; background: var(--line); }
 .relationship-selected { color: var(--warning); }
 .ai-shell { height: calc(100vh - 56px); display: grid; grid-template-rows: auto minmax(260px, 1fr) auto; background: #0d1420; }
 .ai-header { padding: 16px; border-bottom: 1px solid var(--line); background: #0a101a; }
