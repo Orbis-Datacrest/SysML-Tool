@@ -41,3 +41,14 @@ test("applies AI preview patches without mutating original diagram", () => {
   assert.equal(next.elements.length, 1);
   assert.equal(next.version, 2);
 });
+
+test("validates the interactive canvas relationship variants", () => {
+  const elements = [
+    { id: "a", kind: "class", name: "A", x: 0, y: 0, width: 100, height: 60, properties: {} },
+    { id: "b", kind: "class", name: "B", x: 200, y: 0, width: 100, height: 60, properties: {} }
+  ];
+  for (const kind of ["directional-association", "bidirectional-association", "containment"]) {
+    const result = validateDiagram({ tenant_id: "tenant", project_id: "project", type: "uml-class", elements, relationships: [{ id: kind, kind, source_id: "a", target_id: "b" }] });
+    assert.equal(result.valid, true, `${kind} should be supported`);
+  }
+});

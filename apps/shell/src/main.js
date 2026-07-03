@@ -48,8 +48,6 @@ function renderShell() {
         <span id="project-title">Loading project</span>
       </div>
       <div class="topbar-actions">
-        <button id="undo" title="Undo" class="icon-button">↶</button>
-        <button id="redo" title="Redo" class="icon-button">↷</button>
         <button id="save" title="Save" class="primary">Save</button>
       </div>
     </header>
@@ -80,14 +78,14 @@ function renderShell() {
     state.diagram = await api.saveDiagram(state.diagram);
     bus.emit("toast", "Diagram saved");
   });
-  document.querySelector("#undo").addEventListener("click", () => {
+  bus.on("history:undo", () => {
     const previous = state.history.pop();
     if (!previous) return;
     state.future.push(structuredClone(state.diagram));
     state.diagram = previous;
     bus.emit("diagram:changed", state.diagram);
   });
-  document.querySelector("#redo").addEventListener("click", () => {
+  bus.on("history:redo", () => {
     const next = state.future.pop();
     if (!next) return;
     state.history.push(structuredClone(state.diagram));

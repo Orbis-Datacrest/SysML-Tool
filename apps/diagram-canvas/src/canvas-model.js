@@ -28,6 +28,36 @@ export function nodesInRect(elements, rect) {
   ).map((node) => node.id);
 }
 
+export function expandGroupedSelection(elements, ids) {
+  const requested = new Set(ids);
+  const groupIds = new Set(elements.filter((node) => requested.has(node.id) && node.groupId).map((node) => node.groupId));
+  for (const node of elements) {
+    if (node.groupId && groupIds.has(node.groupId)) requested.add(node.id);
+  }
+  return [...requested];
+}
+
+export function groupElements(elements, ids, groupId) {
+  const selected = new Set(ids);
+  elements.forEach((node) => {
+    if (selected.has(node.id)) node.groupId = groupId;
+  });
+}
+
+export function ungroupElements(elements, ids) {
+  const selectedGroups = new Set(elements.filter((node) => ids.includes(node.id) && node.groupId).map((node) => node.groupId));
+  elements.forEach((node) => {
+    if (selectedGroups.has(node.groupId)) delete node.groupId;
+  });
+}
+
+export function applyElementStyle(elements, ids, property, value, defaults) {
+  const selected = new Set(ids);
+  elements.forEach((node) => {
+    if (selected.has(node.id)) node.style = { ...defaults, ...(node.style ?? {}), [property]: value };
+  });
+}
+
 export function moveSelection(elements, selectedIds, originals, dx, dy, canvas) {
   const bounds = selectionBounds(Object.values(originals), selectedIds);
   if (!bounds) return;

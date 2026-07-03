@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { moveSelection, nodesInRect, removeElements, reorderElements } from "../src/canvas-model.js";
+import { applyElementStyle, expandGroupedSelection, groupElements, moveSelection, nodesInRect, removeElements, reorderElements, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -31,4 +31,20 @@ test("z-order commands move selected elements one layer", () => {
   assert.deepEqual(elements.map((item) => item.id), ["b", "a", "c"]);
   reorderElements(elements, ["c"], "backward");
   assert.deepEqual(elements.map((item) => item.id), ["b", "c", "a"]);
+});
+
+test("groups expand selection and can be ungrouped from one member", () => {
+  const elements = [node("a", 0, 0), node("b", 100, 0), node("c", 200, 0)];
+  groupElements(elements, ["a", "b"], "group_1");
+  assert.deepEqual(expandGroupedSelection(elements, ["a"]), ["a", "b"]);
+  ungroupElements(elements, ["a"]);
+  assert.equal(elements.some((item) => item.groupId), false);
+});
+
+test("shared styling applies to every selected element", () => {
+  const elements = [node("a", 0, 0), node("b", 100, 0), node("c", 200, 0)];
+  applyElementStyle(elements, ["a", "b"], "borderWidth", 3, { borderWidth: 1 });
+  assert.equal(elements[0].style.borderWidth, 3);
+  assert.equal(elements[1].style.borderWidth, 3);
+  assert.equal(elements[2].style, undefined);
 });

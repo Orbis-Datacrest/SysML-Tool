@@ -31,8 +31,11 @@ export const elementKinds = [
 
 export const relationshipKinds = [
   "association",
+  "directional-association",
+  "bidirectional-association",
   "aggregation",
   "composition",
+  "containment",
   "generalization",
   "realization",
   "dependency",
