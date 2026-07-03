@@ -1,0 +1,6 @@
+{
+  "name": "@sysml/model-repository-service",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/contract.js"
+}

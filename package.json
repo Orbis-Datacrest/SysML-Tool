@@ -1,0 +1,20 @@
+{
+  "name": "sysml-uml-modeling-tool",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "node services/dev-server/src/index.js",
+    "build": "node scripts/build.mjs",
+    "test": "node --test",
+    "start": "node services/dev-server/src/index.js",
+    "lint": "node scripts/validate-workspace.mjs"
+  },
+  "devDependencies": {},
+  "dependencies": {}
+}

@@ -1,0 +1,64 @@
+{
+  "tenant": {
+    "id": "tenant_demo",
+    "tenant_id": "tenant_demo",
+    "name": "Demo Aerospace"
+  },
+  "project": {
+    "id": "project_demo",
+    "tenant_id": "tenant_demo",
+    "name": "Flight Control System",
+    "description": "Demo UML/SysML project"
+  },
+  "diagrams": [
+    {
+      "id": "diagram_demo",
+      "tenant_id": "tenant_demo",
+      "project_id": "project_demo",
+      "type": "uml-class",
+      "name": "UML Class Diagram",
+      "version": 1,
+      "metadata": {
+        "grid": 20
+      },
+      "elements": [
+        {
+          "id": "class_controller",
+          "kind": "class",
+          "name": "FlightController",
+          "x": 120,
+          "y": 120,
+          "width": 180,
+          "height": 110,
+          "properties": {
+            "attributes": ["mode"],
+            "operations": ["stabilize()"]
+          }
+        },
+        {
+          "id": "class_sensor",
+          "kind": "class",
+          "name": "SensorBus",
+          "x": 430,
+          "y": 150,
+          "width": 170,
+          "height": 100,
+          "properties": {
+            "attributes": ["samples"],
+            "operations": ["read()"]
+          }
+        }
+      ],
+      "relationships": [
+        {
+          "id": "rel_controller_sensor",
+          "kind": "association",
+          "source_id": "class_controller",
+          "target_id": "class_sensor",
+          "label": "reads",
+          "properties": {}
+        }
+      ]
+    }
+  ]
+}

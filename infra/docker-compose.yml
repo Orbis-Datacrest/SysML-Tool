@@ -1,0 +1,57 @@
+services:
+  shell:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: npm run dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ..:/workspace
+    environment:
+      PORT: 8080
+      DATA_DIR: .data
+      KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgres://sysml:sysml@postgres:5432/sysml
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - postgres
+      - kafka
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sysml
+      POSTGRES_PASSWORD: sysml
+      POSTGRES_DB: sysml
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+volumes:
+  postgres-data:
