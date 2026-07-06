@@ -18,6 +18,13 @@ test("group movement preserves spacing and stays inside the canvas", () => {
   assert.deepEqual(elements.map(({ x, y }) => ({ x, y })), [{ x: 80, y: 120 }, { x: 200, y: 140 }]);
 });
 
+test("group movement supports pixel-accurate canvas dragging", () => {
+  const elements = [node("a", 10, 10), node("b", 130, 30)];
+  const originals = Object.fromEntries(elements.map((item) => [item.id, structuredClone(item)]));
+  moveSelection(elements, ["a", "b"], originals, 7, 13, { width: 500, height: 500 }, 1);
+  assert.deepEqual(elements.map(({ x, y }) => ({ x, y })), [{ x: 17, y: 23 }, { x: 137, y: 43 }]);
+});
+
 test("deleting nodes also deletes attached relationships", () => {
   const diagram = { elements: [node("a", 0, 0), node("b", 100, 0)], relationships: [{ id: "r", source_id: "a", target_id: "b" }] };
   removeElements(diagram, ["a"]);

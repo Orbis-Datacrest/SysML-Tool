@@ -58,11 +58,11 @@ export function applyElementStyle(elements, ids, property, value, defaults) {
   });
 }
 
-export function moveSelection(elements, selectedIds, originals, dx, dy, canvas) {
+export function moveSelection(elements, selectedIds, originals, dx, dy, canvas, grid = GRID_SIZE) {
   const bounds = selectionBounds(Object.values(originals), selectedIds);
   if (!bounds) return;
-  const safeDx = clamp(snap(dx), -bounds.left, canvas.width - bounds.right);
-  const safeDy = clamp(snap(dy), -bounds.top, canvas.height - bounds.bottom);
+  const safeDx = clamp(snap(dx, grid), -bounds.left, canvas.width - bounds.right);
+  const safeDy = clamp(snap(dy, grid), -bounds.top, canvas.height - bounds.bottom);
   for (const node of elements) {
     const original = originals[node.id];
     if (!original || original.locked) continue;

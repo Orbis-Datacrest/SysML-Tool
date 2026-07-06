@@ -1,14 +1,8 @@
-export const diagramTypes = [
-  "uml-class",
-  "uml-state-machine",
-  "uml-activity",
-  "uml-sequence",
-  "sysml-bdd",
-  "sysml-ibd",
-  "sysml-requirement",
-  "sysml-parametric",
-  "sysml-use-case"
-];
+import { diagramCatalog } from "./diagram-catalog.js";
+
+export { commonElements, diagramCatalog } from "./diagram-catalog.js";
+
+export const diagramTypes = diagramCatalog.map((diagram) => diagram.value);
 
 export const elementKinds = [
   "class",
@@ -26,7 +20,17 @@ export const elementKinds = [
   "message",
   "port",
   "connector",
-  "note"
+  "note", "comment", "enumeration", "data-type", "object", "slot", "component", "artifact",
+  "node", "device", "execution-environment", "model", "import", "structured-classifier", "part",
+  "collaboration", "profile", "stereotype", "metaclass", "system-boundary", "initial-node", "final-node",
+  "fork-join", "initial-state", "final-state", "choice", "history-state", "activation", "combined-fragment",
+  "interaction", "interaction-use", "state-invariant", "time-constraint", "duration-constraint", "value-type",
+  "interface-block", "constraint-block", "reference", "flow-property", "view", "viewpoint",
+  "constraint-property", "value-property", "parameter", "binding-connector", "object-node", "test-case",
+  "rationale", "problem", "primitive-type", "signal", "accept-event-action", "send-signal-action", "merge-node",
+  "activity-final", "flow-final", "fork-node", "join-node", "input-pin", "output-pin",
+  "activity-partition", "composite-state", "junction", "entry-point", "exit-point", "terminate",
+  "destruction-occurrence", "continuation", "rate"
 ];
 
 export const relationshipKinds = [

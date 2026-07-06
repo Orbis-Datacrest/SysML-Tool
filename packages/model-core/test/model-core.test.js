@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyPatch, validateDiagram } from "../src/index.js";
+import { applyPatch, diagramCatalog, diagramTypes, validateDiagram } from "../src/index.js";
+
+test("catalog contains every unique UML and SysML diagram type", () => {
+  assert.equal(diagramCatalog.filter(({ family }) => family === "UML").length, 14);
+  assert.equal(diagramCatalog.filter(({ family }) => family === "SysML").length, 9);
+  assert.equal(new Set(diagramTypes).size, 23);
+});
 
 test("validates tenant-scoped diagrams and relationships", () => {
   const diagram = {

@@ -253,6 +253,13 @@ function insertProject(project) {
   `).run(project.id, project.tenant_id, project.name, project.description ?? "", project.created_at, project.updated_at);
 }
 
+function updateProject(project) {
+  db.prepare(`
+    UPDATE projects SET name = ?, description = ?, updated_at = ?
+    WHERE id = ? AND tenant_id = ?
+  `).run(project.name, project.description ?? "", project.updated_at, project.id, project.tenant_id);
+}
+
 function insertDiagram(diagram) {
   db.prepare(`
     INSERT OR IGNORE INTO diagrams (id, tenant_id, project_id, type, name, version, created_at, updated_at, metadata, elements, relationships)
@@ -766,6 +773,18 @@ async function api(req, res, pathname) {
     const project = { id: createId("project"), tenant_id: tenantId, name: input.name, description: input.description ?? "", created_at: now(), updated_at: now() };
     insertProject(project);
     return send(res, 201, project);
+  }
+
+  const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
+  if (projectMatch && req.method === "PUT") {
+    const current = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectMatch[1], tenantId);
+    if (!current) return send(res, 404, { error: "Project not found" });
+    const input = await body(req);
+    const name = String(input.name ?? "").trim();
+    if (!name) return send(res, 422, { error: "Project name is required" });
+    const project = { ...current, name, description: String(input.description ?? current.description), updated_at: now() };
+    updateProject(project);
+    return send(res, 200, project);
   }
 
   if (pathname === "/api/diagrams" && req.method === "POST") {

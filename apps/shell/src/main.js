@@ -4,7 +4,6 @@ import "/apps/element-palette/src/index.js";
 import "/apps/diagram-canvas/src/index.js";
 import "/apps/ai-advisor/src/index.js";
 import "/apps/import-export/src/index.js";
-import "/apps/properties-panel/src/index.js";
 import "/apps/auth-tenant-settings/src/index.js";
 
 const state = {
@@ -57,6 +56,27 @@ function setDiagram(diagram, recordHistory = true) {
   bus.emit("diagram:changed", diagram);
 }
 
+function updateWorkspaceTitle() {
+  const title = document.querySelector("#project-title");
+  if (title) title.textContent = state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "No workspace";
+}
+
+function undoDiagram() {
+  const previous = state.history.pop();
+  if (!previous) return;
+  state.future.push(structuredClone(state.diagram));
+  state.diagram = previous;
+  bus.emit("diagram:changed", state.diagram);
+}
+
+function redoDiagram() {
+  const next = state.future.pop();
+  if (!next) return;
+  state.history.push(structuredClone(state.diagram));
+  state.diagram = next;
+  bus.emit("diagram:changed", state.diagram);
+}
+
 function renderShell() {
   document.querySelector("#app").innerHTML = `
     <header class="topbar">
@@ -66,6 +86,7 @@ function renderShell() {
       </div>
       <div class="topbar-actions">
         <button id="save" title="Save" class="primary">Save</button>
+        <section id="import-export" class="topbar-export"></section>
         <section id="auth-session" class="topbar-auth"></section>
       </div>
     </header>
@@ -73,8 +94,6 @@ function renderShell() {
       <aside class="left-rail">
         <section id="project-explorer"></section>
         <section id="element-palette"></section>
-        <section id="properties-panel"></section>
-        <section id="import-export"></section>
         <section id="auth-tenant-settings"></section>
       </aside>
       <section id="diagram-canvas" class="canvas-host"></section>
@@ -83,41 +102,37 @@ function renderShell() {
       </aside>
     </main>
   `;
-  const context = { state, bus, api, setDiagram };
+  const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram };
   mountMfe("project-explorer", document.querySelector("#project-explorer"), context);
   mountMfe("element-palette", document.querySelector("#element-palette"), context);
   mountMfe("diagram-canvas", document.querySelector("#diagram-canvas"), context);
   mountMfe("ai-advisor", document.querySelector("#ai-advisor"), context);
-  mountMfe("properties-panel", document.querySelector("#properties-panel"), context);
   mountMfe("import-export", document.querySelector("#import-export"), context);
   mountMfe("auth-tenant-settings", document.querySelector("#auth-tenant-settings"), context);
   mountMfe("auth-session", document.querySelector("#auth-session"), context);
+
+  document.querySelectorAll(".topbar, .left-rail, .right-rail").forEach((region) => {
+    region.addEventListener("dragstart", (event) => {
+      if (!event.target.closest(".palette-item")) event.preventDefault();
+    });
+    region.addEventListener("drop", (event) => event.preventDefault());
+  });
 
   document.querySelector("#save").addEventListener("click", async () => {
     state.diagram = await api.saveDiagram(state.diagram);
     bus.emit("toast", "Diagram saved");
   });
-  bus.on("history:undo", () => {
-    const previous = state.history.pop();
-    if (!previous) return;
-    state.future.push(structuredClone(state.diagram));
-    state.diagram = previous;
-    bus.emit("diagram:changed", state.diagram);
-  });
-  bus.on("history:redo", () => {
-    const next = state.future.pop();
-    if (!next) return;
-    state.history.push(structuredClone(state.diagram));
-    state.diagram = next;
-    bus.emit("diagram:changed", state.diagram);
-  });
+  bus.on("history:undo", undoDiagram);
+  bus.on("history:redo", redoDiagram);
+  bus.on("project:changed", updateWorkspaceTitle);
+  bus.on("diagram:changed", updateWorkspaceTitle);
 }
 
 async function loadWorkspace() {
   const data = await api.request("/api/bootstrap");
   state.project = data.projects[0] ?? null;
   state.diagram = data.diagrams[0] ?? null;
-  document.querySelector("#project-title").textContent = state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "No workspace";
+  updateWorkspaceTitle();
   bus.emit("bootstrap", data);
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
 }

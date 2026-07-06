@@ -287,10 +287,8 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
       <div class="auth-user">
         <span class="auth-avatar">${state.user.email.slice(0, 1).toUpperCase()}</span>
         <span class="auth-email" title="${state.user.email}">${state.user.email}</span>
-        <button id="logout" title="Logout">Logout</button>
       </div>
     `;
-    element.querySelector("#logout").addEventListener("click", () => bus.emit("auth:logout"));
   }
 
   function render() {
