@@ -102,6 +102,21 @@ function publicMember(member) {
   };
 }
 
+function getUserSettings(userId) {
+  const row = db.prepare("SELECT * FROM user_settings WHERE user_id = ?").get(userId);
+  return { theme: row?.theme ?? "dark" };
+}
+
+function saveUserSettings(userId, settings) {
+  const theme = ["light", "dark"].includes(settings.theme) ? settings.theme : "dark";
+  db.prepare(`
+    INSERT INTO user_settings (user_id, theme, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET theme = excluded.theme, updated_at = excluded.updated_at
+  `).run(userId, theme, now());
+  return getUserSettings(userId);
+}
+
 function migrateSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -141,6 +156,25 @@ function migrateSchema() {
       description TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS recent_projects (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      UNIQUE(user_id, project_id)
+    );
+    CREATE TABLE IF NOT EXISTS project_snapshots (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, version)
     );
     CREATE TABLE IF NOT EXISTS diagrams (
       id TEXT PRIMARY KEY,
@@ -220,6 +254,11 @@ function migrateSchema() {
       error TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id TEXT PRIMARY KEY,
+      theme TEXT NOT NULL DEFAULT 'dark',
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -258,6 +297,91 @@ function updateProject(project) {
     UPDATE projects SET name = ?, description = ?, updated_at = ?
     WHERE id = ? AND tenant_id = ?
   `).run(project.name, project.description ?? "", project.updated_at, project.id, project.tenant_id);
+}
+
+function projectWithStats(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    name: row.name,
+    description: row.description,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    diagram_count: row.diagram_count ?? 0,
+    last_opened_at: row.last_opened_at ?? null
+  };
+}
+
+function projectsForTenant(tenantId, userId = null) {
+  return db.prepare(`
+    SELECT p.*,
+      COUNT(d.id) AS diagram_count,
+      MAX(r.opened_at) AS last_opened_at
+    FROM projects p
+    LEFT JOIN diagrams d ON d.project_id = p.id AND d.tenant_id = p.tenant_id
+    LEFT JOIN recent_projects r ON r.project_id = p.id AND r.user_id = ?
+    WHERE p.tenant_id = ?
+    GROUP BY p.id
+    ORDER BY p.updated_at DESC
+  `).all(userId, tenantId).map(projectWithStats);
+}
+
+function recentProjectsForUser(tenantId, userId) {
+  if (!userId) return [];
+  return db.prepare(`
+    SELECT p.*,
+      COUNT(d.id) AS diagram_count,
+      r.opened_at AS last_opened_at
+    FROM recent_projects r
+    JOIN projects p ON p.id = r.project_id AND p.tenant_id = r.tenant_id
+    LEFT JOIN diagrams d ON d.project_id = p.id AND d.tenant_id = p.tenant_id
+    WHERE r.tenant_id = ? AND r.user_id = ?
+    GROUP BY p.id, r.opened_at
+    ORDER BY r.opened_at DESC
+    LIMIT 8
+  `).all(tenantId, userId).map(projectWithStats);
+}
+
+function recordProjectOpen(tenantId, userId, projectId) {
+  if (!userId) return;
+  db.prepare(`
+    INSERT INTO recent_projects (id, tenant_id, user_id, project_id, opened_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, project_id) DO UPDATE SET opened_at = excluded.opened_at
+  `).run(createId("recent"), tenantId, userId, projectId, now());
+}
+
+function createProjectSnapshot(tenantId, projectId, description = "Auto Save", actorId = null) {
+  const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectId, tenantId);
+  if (!project) return null;
+  const diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map(diagramFromRow);
+  const current = db.prepare("SELECT MAX(version) AS version FROM project_snapshots WHERE project_id = ? AND tenant_id = ?").get(projectId, tenantId);
+  const version = Number(current.version ?? 0) + 1;
+  const item = {
+    id: createId("snapshot"),
+    tenant_id: tenantId,
+    project_id: projectId,
+    version,
+    description,
+    snapshot: JSON.stringify({ project, diagrams }),
+    created_by: actorId,
+    created_at: now()
+  };
+  db.prepare(`
+    INSERT INTO project_snapshots (id, tenant_id, project_id, version, description, snapshot, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(item.id, item.tenant_id, item.project_id, item.version, item.description, item.snapshot, item.created_by, item.created_at);
+  return { id: item.id, project_id: item.project_id, version: item.version, description: item.description, created_at: item.created_at };
+}
+
+function snapshotsForProject(tenantId, projectId) {
+  return db.prepare(`
+    SELECT id, project_id, version, description, created_by, created_at
+    FROM project_snapshots
+    WHERE tenant_id = ? AND project_id = ?
+    ORDER BY version DESC
+  `).all(tenantId, projectId);
 }
 
 function insertDiagram(diagram) {
@@ -621,7 +745,9 @@ function bootstrap(tenantId) {
   };
 }
 
-async function api(req, res, pathname) {
+async function api(req, res, urlOrPath) {
+  const pathname = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
+  const searchParams = typeof urlOrPath === "string" ? new URLSearchParams() : urlOrPath.searchParams;
   if (pathname === "/api/auth/request-code" && req.method === "POST") {
     const limited = rateLimit(req, "auth-code");
     if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
@@ -748,6 +874,19 @@ async function api(req, res, pathname) {
   const { user, tenantId } = authContext(req);
   if (pathname === "/api/bootstrap" && req.method === "GET") return send(res, 200, bootstrap(tenantId));
 
+  if (pathname === "/api/settings" && req.method === "GET") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    return send(res, 200, { settings: getUserSettings(context.user.id) });
+  }
+
+  if (pathname === "/api/settings" && req.method === "PATCH") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    const input = await body(req);
+    return send(res, 200, { settings: saveUserSettings(context.user.id, input) });
+  }
+
   if (pathname === "/api/tenant/members" && req.method === "GET") {
     const context = requireUser(req, res);
     if (!context) return;
@@ -768,11 +907,78 @@ async function api(req, res, pathname) {
     return send(res, 201, { members: bootstrap(context.tenantId).members });
   }
 
+  if (pathname === "/api/projects" && req.method === "GET") {
+    return send(res, 200, {
+      projects: projectsForTenant(tenantId, user?.id ?? null),
+      recent: recentProjectsForUser(tenantId, user?.id ?? null)
+    });
+  }
+
   if (pathname === "/api/projects" && req.method === "POST") {
     const input = await body(req);
-    const project = { id: createId("project"), tenant_id: tenantId, name: input.name, description: input.description ?? "", created_at: now(), updated_at: now() };
+    const timestamp = now();
+    const project = { id: createId("project"), tenant_id: tenantId, name: input.name || "Untitled Project", description: input.description ?? "", created_at: timestamp, updated_at: timestamp };
     insertProject(project);
-    return send(res, 201, project);
+    const diagram = starterDiagram(tenantId, project.id);
+    insertDiagram({ ...diagram, name: "Block Definition Diagram", type: "sysml-bdd" });
+    recordProjectOpen(tenantId, user?.id, project.id);
+    return send(res, 201, projectWithStats({ ...project, diagram_count: 1, last_opened_at: now() }));
+  }
+
+  const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
+  if (projectMatch && req.method === "PATCH") {
+    const input = await body(req);
+    const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectMatch[1], tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    const next = { ...project, name: input.name?.trim() || project.name, description: input.description ?? project.description, updated_at: now() };
+    db.prepare("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ? AND tenant_id = ?").run(next.name, next.description, next.updated_at, next.id, tenantId);
+    return send(res, 200, projectWithStats({ ...next, diagram_count: db.prepare("SELECT COUNT(*) AS count FROM diagrams WHERE project_id = ? AND tenant_id = ?").get(next.id, tenantId).count }));
+  }
+
+  if (projectMatch && req.method === "DELETE") {
+    const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectMatch[1], tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    db.prepare("DELETE FROM events WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM diagrams WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM recent_projects WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM projects WHERE id = ? AND tenant_id = ?").run(project.id, tenantId);
+    return send(res, 200, { ok: true });
+  }
+
+  const projectOpenMatch = pathname.match(/^\/api\/projects\/([^/]+)\/open$/);
+  if (projectOpenMatch && req.method === "POST") {
+    const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectOpenMatch[1], tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    let diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map(diagramFromRow);
+    if (!diagrams.length) {
+      const diagram = starterDiagram(tenantId, project.id);
+      insertDiagram({ ...diagram, name: "Block Definition Diagram", type: "sysml-bdd" });
+      diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map(diagramFromRow);
+    }
+    recordProjectOpen(tenantId, user?.id, project.id);
+    return send(res, 200, { project: projectWithStats({ ...project, diagram_count: diagrams.length, last_opened_at: now() }), diagrams });
+  }
+
+  const projectVersionsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions$/);
+  if (projectVersionsMatch && req.method === "GET") {
+    const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectVersionsMatch[1], tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    return send(res, 200, { versions: snapshotsForProject(tenantId, project.id) });
+  }
+
+  const projectRestoreMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/([^/]+)\/restore$/);
+  if (projectRestoreMatch && req.method === "POST") {
+    const projectId = projectRestoreMatch[1];
+    const version = Number(projectRestoreMatch[2]);
+    const row = db.prepare("SELECT * FROM project_snapshots WHERE project_id = ? AND tenant_id = ? AND version = ?").get(projectId, tenantId, version);
+    if (!row) return send(res, 404, { error: "Version not found" });
+    const snapshot = JSON.parse(row.snapshot);
+    db.prepare("DELETE FROM diagrams WHERE project_id = ? AND tenant_id = ?").run(projectId, tenantId);
+    for (const diagram of snapshot.diagrams ?? []) insertDiagram({ ...diagram, updated_at: now() });
+    db.prepare("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ? AND tenant_id = ?").run(snapshot.project.name, snapshot.project.description ?? "", now(), projectId, tenantId);
+    const restoredProject = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectId, tenantId);
+    const diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map(diagramFromRow);
+    return send(res, 200, { project: restoredProject, diagrams });
   }
 
   const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
@@ -794,7 +1000,34 @@ async function api(req, res, pathname) {
     return send(res, 201, diagram);
   }
 
+  const diagramDuplicateMatch = pathname.match(/^\/api\/diagrams\/([^/]+)\/duplicate$/);
+  if (diagramDuplicateMatch && req.method === "POST") {
+    const current = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramDuplicateMatch[1], tenantId));
+    if (!current) return send(res, 404, { error: "Diagram not found" });
+    const copy = { ...current, id: createId("diagram"), name: `${current.name} Copy`, version: 1, created_at: now(), updated_at: now() };
+    insertDiagram(copy);
+    return send(res, 201, copy);
+  }
+
   const diagramMatch = pathname.match(/^\/api\/diagrams\/([^/]+)$/);
+  if (diagramMatch && req.method === "PATCH") {
+    const input = await body(req);
+    const current = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId));
+    if (!current) return send(res, 404, { error: "Diagram not found" });
+    const next = { ...current, name: input.name?.trim() || current.name, updated_at: now() };
+    updateDiagram(next);
+    return send(res, 200, next);
+  }
+
+  if (diagramMatch && req.method === "DELETE") {
+    const current = db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId);
+    if (!current) return send(res, 404, { error: "Diagram not found" });
+    db.prepare("DELETE FROM events WHERE diagram_id = ? AND tenant_id = ?").run(current.id, tenantId);
+    db.prepare("DELETE FROM diagrams WHERE id = ? AND tenant_id = ?").run(current.id, tenantId);
+    db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), current.project_id, tenantId);
+    return send(res, 200, { ok: true });
+  }
+
   if (diagramMatch && req.method === "PUT") {
     const input = await body(req);
     const current = db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId);
@@ -804,6 +1037,8 @@ async function api(req, res, pathname) {
     if (!validation.valid) return send(res, 422, validation);
     updateDiagram(candidate);
     recordEvent(candidate, { summary: "Saved full diagram state", operations: [] }, user?.id ?? "local-user", "save");
+    db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), candidate.project_id, tenantId);
+    if (searchParams.get("snapshot") === "1") createProjectSnapshot(tenantId, candidate.project_id, "Manual Save", user?.id ?? null);
     return send(res, 200, candidate);
   }
 
@@ -826,6 +1061,7 @@ async function api(req, res, pathname) {
     if (!validation.valid) return send(res, 422, validation);
     updateDiagram(next);
     recordEvent(next, input.patch, "ai-advisor", input.patch.summary);
+    db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), next.project_id, tenantId);
     return send(res, 200, next);
   }
 
@@ -876,7 +1112,7 @@ await migrateJsonData();
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname.startsWith("/api/")) return await api(req, res, url.pathname);
+    if (url.pathname.startsWith("/api/")) return await api(req, res, url);
     return await serveStatic(req, res, url.pathname);
   } catch (error) {
     console.error(error);
