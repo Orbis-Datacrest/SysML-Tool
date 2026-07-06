@@ -1,6 +1,6 @@
 import { registerMfe } from "/packages/ui/src/moduleRegistry.js";
 
-registerMfe("import-export", (element, { state }) => {
+registerMfe("import-export", (element, { state, api }) => {
   function downloadJson() {
     const blob = new Blob([JSON.stringify({ project: state.project, diagram: state.diagram }, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
@@ -33,8 +33,12 @@ registerMfe("import-export", (element, { state }) => {
       link.download = `${state.diagram.name}.puml`;
       link.click();
     });
-    element.querySelector("#pdf").addEventListener("click", () => {
-      window.open(`/api/diagrams/${state.diagram.id}/export/pdf`, "_blank");
+    element.querySelector("#pdf").addEventListener("click", async () => {
+      const blob = await api.request(`/api/diagrams/${state.diagram.id}/export/pdf`);
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${state.diagram.name}.pdf`;
+      link.click();
     });
   }
   render();

@@ -27,7 +27,7 @@ button.danger { border-color: #74313a; color: #ffd2d2; background: #351821; }
 button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .topbar { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: #080c13; color: #fff; border-bottom: 1px solid var(--line); }
 .topbar span { margin-left: 14px; color: #aab7ca; }
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
 .brand-mark { display: inline-flex; align-items: center; gap: 10px; }
 .brand-icon { width: 26px; height: 26px; display: inline-grid; place-items: center; margin: 0; border-radius: 6px; color: #061410; background: linear-gradient(135deg, var(--accent), #87f7d4); font-weight: 800; }
 .icon-button { width: 36px; height: 34px; padding: 0; font-size: 18px; }
@@ -102,7 +102,30 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .preview { border: 1px solid #8b6d2b; background: #221b0d; border-radius: 8px; padding: 10px; }
 textarea { width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: #111a28; color: var(--ink); }
 select, input { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; background: #111a28; color: var(--ink); }
+.topbar-auth { position: relative; min-width: 74px; }
+.topbar-auth > button { height: 34px; white-space: nowrap; }
+.auth-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgb(3 7 13 / 72%); backdrop-filter: blur(5px); }
+.auth-modal { position: relative; width: min(420px, calc(100vw - 40px)); border: 1px solid #304057; border-radius: 14px; background: #0f1724; box-shadow: 0 30px 90px rgb(0 0 0 / 55%); }
+.auth-close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; padding: 0; border-radius: 999px; font-size: 20px; line-height: 1; }
+.auth-modal-header { display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 24px 24px 14px; border-bottom: 1px solid var(--line); }
+.topbar .auth-modal-icon { display: inline-grid; place-items: center; width: 44px; height: 44px; margin-left: 0; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #061410; font-weight: 900; }
+.auth-modal h2 { margin: 0; font-size: 18px; color: var(--ink); }
+.auth-modal p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.auth-modal-body { display: grid; gap: 10px; padding: 18px 24px 24px; }
+.auth-modal-body label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.auth-modal-body input { height: 40px; }
+.auth-modal-body button { width: 100%; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: #0b111d; }
+.auth-tabs button { border-color: transparent; background: transparent; color: var(--muted); }
+.auth-tabs button.active { background: #1d2b42; color: var(--ink); border-color: #33445f; }
+.auth-message { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #111a28; color: var(--muted); }
+.auth-dev-code { border-color: #6b5421; background: #241b0c; color: #ffd98a; }
+.auth-user { display: grid; grid-template-columns: 28px minmax(120px, 1fr) auto; align-items: center; gap: 7px; }
+.topbar .auth-avatar { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-left: 0; border-radius: 999px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #061410; font-weight: 800; }
+.topbar .auth-email { margin-left: 0; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dce7f6; font-size: 13px; }
 @media (max-width: 1050px) {
   .workspace { grid-template-columns: 240px minmax(420px, 1fr); }
   .right-rail { grid-column: 1 / -1; height: 380px; }
+  .topbar .auth-email { display: none; }
+  .auth-user { grid-template-columns: 28px auto; }
 }

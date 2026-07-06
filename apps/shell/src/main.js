@@ -9,6 +9,9 @@ import "/apps/auth-tenant-settings/src/index.js";
 
 const state = {
   tenantId: "tenant_demo",
+  authToken: localStorage.getItem("sysml.authToken") ?? "",
+  refreshToken: localStorage.getItem("sysml.refreshToken") ?? "",
+  user: null,
   project: null,
   diagram: null,
   selectedElementIds: [],
@@ -21,10 +24,24 @@ const state = {
 const bus = createEventBus();
 const api = {
   async request(path, options = {}) {
+    return this.rawRequest(path, options, true);
+  },
+  async rawRequest(path, options = {}, allowRefresh = true) {
+    const authHeaders = state.authToken ? { authorization: `Bearer ${state.authToken}` } : {};
     const result = await fetch(path, {
       ...options,
-      headers: { "content-type": "application/json", "x-tenant-id": state.tenantId, ...(options.headers ?? {}) }
+      headers: { "content-type": "application/json", "x-tenant-id": state.tenantId, ...authHeaders, ...(options.headers ?? {}) }
     });
+    if (result.status === 401 && allowRefresh && state.refreshToken && path !== "/api/auth/refresh") {
+      const refreshed = await this.rawRequest("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) }, false);
+      state.authToken = refreshed.token;
+      state.refreshToken = refreshed.refreshToken;
+      state.user = refreshed.user;
+      localStorage.setItem("sysml.authToken", refreshed.token);
+      localStorage.setItem("sysml.refreshToken", refreshed.refreshToken);
+      bus.emit("auth:changed", state.user);
+      return this.rawRequest(path, options, false);
+    }
     if (!result.ok) throw new Error((await result.json()).error ?? result.statusText);
     return result.headers.get("content-type")?.includes("application/json") ? result.json() : result.blob();
   },
@@ -49,6 +66,7 @@ function renderShell() {
       </div>
       <div class="topbar-actions">
         <button id="save" title="Save" class="primary">Save</button>
+        <section id="auth-session" class="topbar-auth"></section>
       </div>
     </header>
     <main class="workspace">
@@ -73,6 +91,7 @@ function renderShell() {
   mountMfe("properties-panel", document.querySelector("#properties-panel"), context);
   mountMfe("import-export", document.querySelector("#import-export"), context);
   mountMfe("auth-tenant-settings", document.querySelector("#auth-tenant-settings"), context);
+  mountMfe("auth-session", document.querySelector("#auth-session"), context);
 
   document.querySelector("#save").addEventListener("click", async () => {
     state.diagram = await api.saveDiagram(state.diagram);
@@ -94,14 +113,61 @@ function renderShell() {
   });
 }
 
+async function loadWorkspace() {
+  const data = await api.request("/api/bootstrap");
+  state.project = data.projects[0] ?? null;
+  state.diagram = data.diagrams[0] ?? null;
+  document.querySelector("#project-title").textContent = state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "No workspace";
+  bus.emit("bootstrap", data);
+  if (state.diagram) bus.emit("diagram:changed", state.diagram);
+}
+
 async function boot() {
   renderShell();
-  const data = await api.request("/api/bootstrap");
-  state.project = data.projects[0];
-  state.diagram = data.diagrams[0];
-  document.querySelector("#project-title").textContent = `${state.project.name} / ${state.diagram.name}`;
-  bus.emit("bootstrap", data);
-  bus.emit("diagram:changed", state.diagram);
+  if (state.authToken) {
+    const session = await api.request("/api/auth/me");
+    state.user = session.user;
+    if (!state.user && state.refreshToken) {
+      const refreshed = await api.request("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) });
+      state.authToken = refreshed.token;
+      state.refreshToken = refreshed.refreshToken;
+      state.user = refreshed.user;
+      localStorage.setItem("sysml.authToken", refreshed.token);
+      localStorage.setItem("sysml.refreshToken", refreshed.refreshToken);
+    }
+    if (state.user) state.tenantId = state.user.tenant_id;
+    if (!state.user) {
+      state.authToken = "";
+      state.refreshToken = "";
+      localStorage.removeItem("sysml.authToken");
+      localStorage.removeItem("sysml.refreshToken");
+    }
+    bus.emit("auth:changed", state.user);
+  }
+  await loadWorkspace();
 }
+
+bus.on("auth:login", async ({ token, refreshToken, user }) => {
+  state.authToken = token;
+  state.refreshToken = refreshToken ?? "";
+  state.user = user;
+  state.tenantId = user.tenant_id;
+  localStorage.setItem("sysml.authToken", token);
+  if (refreshToken) localStorage.setItem("sysml.refreshToken", refreshToken);
+  bus.emit("auth:changed", user);
+  await loadWorkspace();
+});
+
+bus.on("auth:logout", async () => {
+  if (state.authToken) await api.request("/api/auth/logout", { method: "POST" });
+  state.authToken = "";
+  state.refreshToken = "";
+  state.user = null;
+  state.tenantId = "tenant_demo";
+  localStorage.removeItem("sysml.authToken");
+  localStorage.removeItem("sysml.refreshToken");
+  bus.emit("auth:changed", null);
+  await loadWorkspace();
+});
 
 boot();

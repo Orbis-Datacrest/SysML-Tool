@@ -4,11 +4,23 @@ import { existsSync, createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { applyPatch, createId, validateDiagram } from "../../../packages/model-core/src/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const dataDir = path.join(root, process.env.DATA_DIR ?? ".data");
+const configuredDataDir = process.env.DATA_DIR ?? ".data";
+const dataDir = path.isAbsolute(configuredDataDir) ? configuredDataDir : path.join(root, configuredDataDir);
+const dbPath = path.join(dataDir, process.env.SQLITE_DB_FILE ?? "sysml-studio.db");
 const port = Number(process.env.PORT ?? 8080);
+const accessTokenDays = Number(process.env.SESSION_DAYS ?? 7);
+const refreshTokenDays = Number(process.env.REFRESH_SESSION_DAYS ?? 30);
+const authWindowMs = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 15 * 60 * 1000);
+const authMaxAttempts = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10);
+
+await mkdir(dataDir, { recursive: true });
+const db = new DatabaseSync(dbPath);
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
 
 async function readJson(name, fallback) {
   const file = path.join(dataDir, `${name}.json`);
@@ -25,28 +37,451 @@ function now() {
   return new Date().toISOString();
 }
 
-function withTenant(entity, tenantId) {
-  return entity && entity.tenant_id === tenantId;
+function addDays(days) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-async function seed() {
-  await mkdir(dataDir, { recursive: true });
-  const tenants = await readJson("tenants", []);
-  if (tenants.length) return;
-  const timestamp = now();
-  const tenant = { id: "tenant_demo", tenant_id: "tenant_demo", name: "Demo Aerospace", created_at: timestamp, updated_at: timestamp };
-  const project = {
-    id: "project_demo",
-    tenant_id: tenant.id,
-    name: "Flight Control System",
-    description: "Demo UML/SysML project",
-    created_at: timestamp,
-    updated_at: timestamp
+function normalizeEmail(email) {
+  return String(email ?? "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validatePassword(password) {
+  if (String(password ?? "").length < 8) return "Password must be at least 8 characters.";
+  return "";
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("base64url")) {
+  const hash = crypto.scryptSync(password, salt, 64).toString("base64url");
+  return { salt, hash };
+}
+
+function verifyPassword(password, user) {
+  if (!user?.password_hash || !user?.password_salt) return false;
+  const candidate = crypto.scryptSync(password, user.password_salt, 64);
+  const stored = Buffer.from(user.password_hash, "base64url");
+  return stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate);
+}
+
+function makeVerificationCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function makeToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function tenantIdForEmail(email) {
+  return `tenant_${crypto.createHash("sha1").update(email).digest("hex").slice(0, 12)}`;
+}
+
+function json(value, fallback = {}) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  const { id, email, tenant_id, role, verified_at } = user;
+  return { id, email, tenant_id, role, verified_at };
+}
+
+function publicMember(member) {
+  return {
+    id: member.id,
+    tenant_id: member.tenant_id,
+    user_id: member.user_id,
+    email: member.email,
+    role: member.role,
+    invited_by: member.invited_by,
+    accepted_at: member.accepted_at,
+    created_at: member.created_at
   };
-  const diagram = {
-    id: "diagram_demo",
-    tenant_id: tenant.id,
-    project_id: project.id,
+}
+
+function migrateSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      tenant_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Owner',
+      password_hash TEXT,
+      password_salt TEXT,
+      created_at TEXT NOT NULL,
+      verified_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      owner_user_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tenant_members (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL,
+      invited_by TEXT,
+      accepted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, email)
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS diagrams (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      elements TEXT NOT NULL DEFAULT '[]',
+      relationships TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      access_token TEXT NOT NULL UNIQUE,
+      refresh_token TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      refresh_expires_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      password_hash TEXT,
+      password_salt TEXT,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      reset_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      diagram_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      actor_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      patch TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ai_keys (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      encrypted_api_key TEXT NOT NULL,
+      active INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS email_outbox (
+      id TEXT PRIMARY KEY,
+      recipient TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      text TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+function diagramFromRow(row) {
+  return row && {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    project_id: row.project_id,
+    type: row.type,
+    name: row.name,
+    version: row.version,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    metadata: json(row.metadata, {}),
+    elements: json(row.elements, []),
+    relationships: json(row.relationships, [])
+  };
+}
+
+function insertTenant(tenant) {
+  db.prepare(`
+    INSERT OR IGNORE INTO tenants (id, tenant_id, name, owner_user_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(tenant.id, tenant.tenant_id ?? tenant.id, tenant.name, tenant.owner_user_id ?? null, tenant.created_at, tenant.updated_at);
+}
+
+function insertProject(project) {
+  db.prepare(`
+    INSERT OR IGNORE INTO projects (id, tenant_id, name, description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(project.id, project.tenant_id, project.name, project.description ?? "", project.created_at, project.updated_at);
+}
+
+function insertDiagram(diagram) {
+  db.prepare(`
+    INSERT OR IGNORE INTO diagrams (id, tenant_id, project_id, type, name, version, created_at, updated_at, metadata, elements, relationships)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    diagram.id,
+    diagram.tenant_id,
+    diagram.project_id,
+    diagram.type,
+    diagram.name,
+    diagram.version ?? 1,
+    diagram.created_at,
+    diagram.updated_at,
+    JSON.stringify(diagram.metadata ?? {}),
+    JSON.stringify(diagram.elements ?? []),
+    JSON.stringify(diagram.relationships ?? [])
+  );
+}
+
+function updateDiagram(diagram) {
+  db.prepare(`
+    UPDATE diagrams
+    SET tenant_id = ?, project_id = ?, type = ?, name = ?, version = ?, updated_at = ?, metadata = ?, elements = ?, relationships = ?
+    WHERE id = ?
+  `).run(
+    diagram.tenant_id,
+    diagram.project_id,
+    diagram.type,
+    diagram.name,
+    diagram.version,
+    diagram.updated_at,
+    JSON.stringify(diagram.metadata ?? {}),
+    JSON.stringify(diagram.elements ?? []),
+    JSON.stringify(diagram.relationships ?? []),
+    diagram.id
+  );
+}
+
+function getUserByEmail(email) {
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(normalizeEmail(email));
+}
+
+function getUserById(id) {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+}
+
+function upsertUser(user) {
+  db.prepare(`
+    INSERT INTO users (id, email, tenant_id, role, password_hash, password_salt, created_at, verified_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      tenant_id = excluded.tenant_id,
+      role = excluded.role,
+      password_hash = COALESCE(excluded.password_hash, users.password_hash),
+      password_salt = COALESCE(excluded.password_salt, users.password_salt),
+      verified_at = excluded.verified_at
+  `).run(user.id, user.email, user.tenant_id, user.role, user.password_hash ?? null, user.password_salt ?? null, user.created_at, user.verified_at);
+}
+
+function upsertTenantMember({ tenant_id, user_id = null, email, role, invited_by = null, accepted_at = null }) {
+  const timestamp = now();
+  db.prepare(`
+    INSERT INTO tenant_members (id, tenant_id, user_id, email, role, invited_by, accepted_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tenant_id, email) DO UPDATE SET
+      user_id = COALESCE(excluded.user_id, tenant_members.user_id),
+      role = excluded.role,
+      accepted_at = COALESCE(excluded.accepted_at, tenant_members.accepted_at),
+      updated_at = excluded.updated_at
+  `).run(createId("member"), tenant_id, user_id, normalizeEmail(email), role, invited_by, accepted_at, timestamp, timestamp);
+}
+
+async function migrateJsonData() {
+  const existing = db.prepare("SELECT COUNT(*) AS count FROM tenants").get().count;
+  if (existing > 0) return;
+
+  const timestamp = now();
+  const tenants = await readJson("tenants", []);
+  const projects = await readJson("projects", []);
+  const diagrams = await readJson("diagrams", []);
+  const users = await readJson("users", []);
+  const events = await readJson("events", []);
+  const aiKeys = await readJson("aiKeys", []);
+
+  if (!tenants.length) {
+    const tenant = { id: "tenant_demo", tenant_id: "tenant_demo", name: "Demo Aerospace", created_at: timestamp, updated_at: timestamp };
+    const project = { id: "project_demo", tenant_id: tenant.id, name: "Flight Control System", description: "Demo UML/SysML project", created_at: timestamp, updated_at: timestamp };
+    const diagram = {
+      id: "diagram_demo",
+      tenant_id: tenant.id,
+      project_id: project.id,
+      type: "uml-class",
+      name: "UML Class Diagram",
+      version: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+      metadata: { grid: 20 },
+      elements: [
+        { id: "class_controller", kind: "class", name: "FlightController", x: 120, y: 120, width: 180, height: 110, properties: { attributes: ["mode"], operations: ["stabilize()"] } },
+        { id: "class_sensor", kind: "class", name: "SensorBus", x: 430, y: 150, width: 170, height: 100, properties: { attributes: ["samples"], operations: ["read()"] } }
+      ],
+      relationships: [
+        { id: "rel_controller_sensor", kind: "association", source_id: "class_controller", target_id: "class_sensor", label: "reads", properties: {} }
+      ]
+    };
+    insertTenant(tenant);
+    insertProject(project);
+    insertDiagram(diagram);
+    return;
+  }
+
+  for (const tenant of tenants) insertTenant(tenant);
+  for (const project of projects) insertProject(project);
+  for (const diagram of diagrams) insertDiagram(diagram);
+  for (const user of users) {
+    upsertUser({ ...user, role: user.role ?? "Owner", created_at: user.created_at ?? timestamp });
+    upsertTenantMember({ tenant_id: user.tenant_id, user_id: user.id, email: user.email, role: user.role ?? "Owner", accepted_at: user.verified_at ?? timestamp });
+  }
+  for (const event of events) {
+    db.prepare(`
+      INSERT OR IGNORE INTO events (id, tenant_id, project_id, diagram_id, version, actor_id, reason, created_at, patch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(event.id, event.tenant_id, event.project_id, event.diagram_id, event.version, event.actor_id, event.reason, event.created_at, JSON.stringify(event.patch ?? {}));
+  }
+  for (const key of aiKeys) {
+    db.prepare(`
+      INSERT OR IGNORE INTO ai_keys (id, tenant_id, provider, model, display_name, encrypted_api_key, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(key.id, key.tenant_id, key.provider, key.model, key.display_name, key.encrypted_api_key, key.active ? 1 : 0, key.created_at);
+  }
+}
+
+function rateLimit(req, bucket) {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "local";
+  const key = `${bucket}:${ip}`;
+  const current = Date.now();
+  const existing = db.prepare("SELECT * FROM rate_limits WHERE key = ?").get(key);
+  if (!existing || existing.reset_at <= current) {
+    db.prepare("INSERT OR REPLACE INTO rate_limits (key, count, reset_at) VALUES (?, ?, ?)").run(key, 1, current + authWindowMs);
+    return null;
+  }
+  if (existing.count >= authMaxAttempts) {
+    const retryAfter = Math.ceil((existing.reset_at - current) / 1000);
+    return { error: `Too many attempts. Try again in ${retryAfter} seconds.`, retryAfter };
+  }
+  db.prepare("UPDATE rate_limits SET count = count + 1 WHERE key = ?").run(key);
+  return null;
+}
+
+async function deliverEmail({ to, subject, text }) {
+  const provider = (process.env.EMAIL_PROVIDER ?? "dev").toLowerCase();
+  const from = process.env.EMAIL_FROM ?? "SysML Studio <no-reply@sysml-studio.local>";
+
+  try {
+    if (provider === "resend" && process.env.RESEND_API_KEY) {
+      const result = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ from, to, subject, text })
+      });
+      if (!result.ok) throw new Error(await result.text());
+      recordEmailOutbox({ to, subject, text, provider, status: "sent" });
+      return;
+    }
+
+    if (provider === "sendgrid" && process.env.SENDGRID_API_KEY) {
+      const result = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.SENDGRID_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ personalizations: [{ to: [{ email: to }] }], from: { email: from.replace(/^.*<|>$/g, "") }, subject, content: [{ type: "text/plain", value: text }] })
+      });
+      if (!result.ok) throw new Error(await result.text());
+      recordEmailOutbox({ to, subject, text, provider, status: "sent" });
+      return;
+    }
+
+    await writeDevEmail({ to, subject, text });
+    recordEmailOutbox({ to, subject, text, provider: "dev", status: "queued" });
+  } catch (error) {
+    recordEmailOutbox({ to, subject, text, provider, status: "failed", error: error.message });
+    throw error;
+  }
+}
+
+function recordEmailOutbox({ to, subject, text, provider, status, error = null }) {
+  db.prepare(`
+    INSERT INTO email_outbox (id, recipient, subject, text, provider, status, error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(createId("email"), to, subject, text, provider, status, error, now());
+}
+
+async function writeDevEmail({ to, subject, text }) {
+  const outbox = await readJson("emailOutbox", []);
+  outbox.push({ id: createId("email"), to, subject, text, created_at: now() });
+  await writeJson("emailOutbox", outbox);
+  const code = text.match(/\b\d{6}\b/)?.[0];
+  console.log(`[email:dev] ${subject} for ${to}${code ? `: ${code}` : ""}`);
+}
+
+async function sendVerificationEmail(email, code) {
+  await deliverEmail({
+    to: email,
+    subject: "Your SysML Studio verification code",
+    text: `Your SysML Studio verification code is ${code}. It expires in 10 minutes.`
+  });
+}
+
+async function sendPasswordResetEmail(email, code) {
+  await deliverEmail({
+    to: email,
+    subject: "Reset your SysML Studio password",
+    text: `Your SysML Studio password reset code is ${code}. It expires in 10 minutes.`
+  });
+}
+
+async function sendMemberInviteEmail(email, tenant, inviter, role) {
+  await deliverEmail({
+    to: email,
+    subject: `Invitation to ${tenant.name} on SysML Studio`,
+    text: `${inviter.email} invited you to ${tenant.name} as ${role}. Login with this email to join the workspace.`
+  });
+}
+
+function starterDiagram(tenantId, projectId) {
+  const timestamp = now();
+  return {
+    id: createId("diagram"),
+    tenant_id: tenantId,
+    project_id: projectId,
     type: "uml-class",
     name: "UML Class Diagram",
     version: 1,
@@ -54,18 +489,74 @@ async function seed() {
     updated_at: timestamp,
     metadata: { grid: 20 },
     elements: [
-      { id: "class_controller", kind: "class", name: "FlightController", x: 120, y: 120, width: 180, height: 110, properties: { attributes: ["mode"], operations: ["stabilize()"] } },
-      { id: "class_sensor", kind: "class", name: "SensorBus", x: 430, y: 150, width: 170, height: 100, properties: { attributes: ["samples"], operations: ["read()"] } }
+      { id: createId("class"), kind: "class", name: "FlightController", x: 120, y: 120, width: 180, height: 110, properties: { attributes: ["mode"], operations: ["stabilize()"] } },
+      { id: createId("class"), kind: "class", name: "SensorBus", x: 430, y: 150, width: 170, height: 100, properties: { attributes: ["samples"], operations: ["read()"] } }
     ],
-    relationships: [
-      { id: "rel_controller_sensor", kind: "association", source_id: "class_controller", target_id: "class_sensor", label: "reads", properties: {} }
-    ]
+    relationships: []
   };
-  await writeJson("tenants", [tenant]);
-  await writeJson("projects", [project]);
-  await writeJson("diagrams", [diagram]);
-  await writeJson("events", []);
-  await writeJson("aiKeys", []);
+}
+
+function ensureUserWorkspace(user) {
+  const timestamp = now();
+  const existingTenant = db.prepare("SELECT * FROM tenants WHERE id = ?").get(user.tenant_id);
+  if (!existingTenant) {
+    insertTenant({ id: user.tenant_id, tenant_id: user.tenant_id, name: `${user.email} Workspace`, owner_user_id: user.id, created_at: timestamp, updated_at: timestamp });
+  }
+
+  upsertTenantMember({ tenant_id: user.tenant_id, user_id: user.id, email: user.email, role: user.role ?? "Owner", accepted_at: user.verified_at ?? timestamp });
+
+  let project = db.prepare("SELECT * FROM projects WHERE tenant_id = ? ORDER BY created_at LIMIT 1").get(user.tenant_id);
+  if (!project) {
+    project = { id: createId("project"), tenant_id: user.tenant_id, name: "My SysML Project", description: "Private workspace saved to this verified email account", created_at: timestamp, updated_at: timestamp };
+    insertProject(project);
+  }
+
+  const diagram = db.prepare("SELECT * FROM diagrams WHERE tenant_id = ? ORDER BY created_at LIMIT 1").get(user.tenant_id);
+  if (!diagram) insertDiagram(starterDiagram(user.tenant_id, project.id));
+}
+
+function createSession(user) {
+  const session = {
+    id: createId("session"),
+    user_id: user.id,
+    access_token: makeToken(),
+    refresh_token: makeToken(),
+    created_at: now(),
+    expires_at: addDays(accessTokenDays),
+    refresh_expires_at: addDays(refreshTokenDays)
+  };
+  db.prepare(`
+    INSERT INTO sessions (id, user_id, access_token, refresh_token, created_at, expires_at, refresh_expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(session.id, session.user_id, session.access_token, session.refresh_token, session.created_at, session.expires_at, session.refresh_expires_at);
+  return session;
+}
+
+function authContext(req) {
+  const header = req.headers.authorization ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!token) return { user: null, tenantId: req.headers["x-tenant-id"] ?? "tenant_demo" };
+
+  const session = db.prepare("SELECT * FROM sessions WHERE access_token = ? AND revoked_at IS NULL").get(token);
+  if (!session || new Date(session.expires_at) <= new Date()) return { user: null, tenantId: req.headers["x-tenant-id"] ?? "tenant_demo" };
+
+  const user = getUserById(session.user_id);
+  if (!user) return { user: null, tenantId: req.headers["x-tenant-id"] ?? "tenant_demo" };
+  return { user, tenantId: user.tenant_id, session };
+}
+
+function requireUser(req, res) {
+  const context = authContext(req);
+  if (!context.user) {
+    send(res, 401, { error: "Login required." });
+    return null;
+  }
+  return context;
+}
+
+function send(res, status, payload, headers = {}) {
+  res.writeHead(status, { "content-type": "application/json", ...headers });
+  res.end(JSON.stringify(payload));
 }
 
 async function body(req) {
@@ -73,11 +564,6 @@ async function body(req) {
   for await (const chunk of req) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString("utf8");
   return text ? JSON.parse(text) : {};
-}
-
-function send(res, status, payload, headers = {}) {
-  res.writeHead(status, { "content-type": "application/json", ...headers });
-  res.end(JSON.stringify(payload));
 }
 
 function encryptSecret(secret) {
@@ -89,20 +575,11 @@ function encryptSecret(secret) {
   return `${iv.toString("base64")}.${tag.toString("base64")}.${encrypted.toString("base64")}`;
 }
 
-async function recordEvent(diagram, patch, actor = "local-user", reason = "diagram update") {
-  const events = await readJson("events", []);
-  events.push({
-    id: createId("event"),
-    tenant_id: diagram.tenant_id,
-    project_id: diagram.project_id,
-    diagram_id: diagram.id,
-    version: diagram.version,
-    actor_id: actor,
-    reason,
-    created_at: now(),
-    patch
-  });
-  await writeJson("events", events);
+function recordEvent(diagram, patch, actor = "local-user", reason = "diagram update") {
+  db.prepare(`
+    INSERT INTO events (id, tenant_id, project_id, diagram_id, version, actor_id, reason, created_at, patch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(createId("event"), diagram.tenant_id, diagram.project_id, diagram.id, diagram.version, actor, reason, now(), JSON.stringify(patch ?? {}));
 }
 
 function makeAiPatch(diagram, prompt) {
@@ -113,118 +590,243 @@ function makeAiPatch(diagram, prompt) {
     return {
       summary: "Add a SysML-style requirement note and trace relationship for review.",
       operations: [
-        {
-          op: "addElement",
-          element: { id: createId("req"), kind: "requirement", name: "Derived Requirement", x: baseX, y: baseY, width: 210, height: 120, properties: { text: prompt } }
-        }
+        { op: "addElement", element: { id: createId("req"), kind: "requirement", name: "Derived Requirement", x: baseX, y: baseY, width: 210, height: 120, properties: { text: prompt } } }
       ]
     };
   }
   const newClassId = createId("class");
   const firstClass = diagram.elements.find((element) => element.kind === "class" || element.kind === "block");
   const operations = [
-    {
-      op: "addElement",
-      element: { id: newClassId, kind: "class", name: "AIRecommendedComponent", x: baseX, y: baseY, width: 210, height: 112, properties: { attributes: ["status"], operations: ["validate()"] } }
-    }
+    { op: "addElement", element: { id: newClassId, kind: "class", name: "AIRecommendedComponent", x: baseX, y: baseY, width: 210, height: 112, properties: { attributes: ["status"], operations: ["validate()"] } } }
   ];
   if (firstClass) {
-    operations.push({
-      op: "addRelationship",
-      relationship: { id: createId("rel"), kind: "dependency", source_id: firstClass.id, target_id: newClassId, label: "uses", properties: { proposed_by: "ai" } }
-    });
+    operations.push({ op: "addRelationship", relationship: { id: createId("rel"), kind: "dependency", source_id: firstClass.id, target_id: newClassId, label: "uses", properties: { proposed_by: "ai" } } });
   }
   return { summary: "Add a recommended component and dependency based on the current canvas context.", operations };
 }
 
+function bootstrap(tenantId) {
+  return {
+    tenants: db.prepare("SELECT * FROM tenants WHERE id = ?").all(tenantId),
+    projects: db.prepare("SELECT * FROM projects WHERE tenant_id = ? ORDER BY created_at").all(tenantId),
+    diagrams: db.prepare("SELECT * FROM diagrams WHERE tenant_id = ? ORDER BY created_at").all(tenantId).map(diagramFromRow),
+    members: db.prepare("SELECT * FROM tenant_members WHERE tenant_id = ? ORDER BY created_at").all(tenantId).map(publicMember)
+  };
+}
+
 async function api(req, res, pathname) {
-  const tenantId = req.headers["x-tenant-id"] ?? "tenant_demo";
-  if (pathname === "/api/bootstrap" && req.method === "GET") {
-    const tenants = await readJson("tenants", []);
-    const projects = (await readJson("projects", [])).filter((project) => withTenant(project, tenantId));
-    const diagrams = (await readJson("diagrams", [])).filter((diagram) => withTenant(diagram, tenantId));
-    return send(res, 200, { tenants, projects, diagrams });
-  }
-  if (pathname === "/api/tenants" && req.method === "POST") {
+  if (pathname === "/api/auth/request-code" && req.method === "POST") {
+    const limited = rateLimit(req, "auth-code");
+    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
     const input = await body(req);
-    const tenants = await readJson("tenants", []);
-    const tenant = { id: createId("tenant"), tenant_id: createId("tenant"), name: input.name, created_at: now(), updated_at: now() };
-    tenant.tenant_id = tenant.id;
-    tenants.push(tenant);
-    await writeJson("tenants", tenants);
-    return send(res, 201, tenant);
+    const email = normalizeEmail(input.email);
+    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
+    const wantsPassword = input.password !== undefined;
+    let passwordCredential = {};
+    if (wantsPassword) {
+      const passwordError = validatePassword(input.password);
+      if (passwordError) return send(res, 422, { error: passwordError });
+      const { salt, hash } = hashPassword(input.password);
+      passwordCredential = { password_salt: salt, password_hash: hash };
+    }
+    db.prepare("DELETE FROM auth_challenges WHERE expires_at <= ?").run(now());
+    const challenge = { id: createId("challenge"), email, code: makeVerificationCode(), purpose: wantsPassword ? "password_signup" : "email_login", expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), created_at: now(), ...passwordCredential };
+    db.prepare(`
+      INSERT INTO auth_challenges (id, email, code, purpose, password_hash, password_salt, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(challenge.id, challenge.email, challenge.code, challenge.purpose, challenge.password_hash ?? null, challenge.password_salt ?? null, challenge.expires_at, challenge.created_at);
+    await sendVerificationEmail(email, challenge.code);
+    return send(res, 200, { ok: true, message: "Verification code sent.", dev_code: process.env.NODE_ENV === "production" ? undefined : challenge.code });
   }
+
+  if (pathname === "/api/auth/verify" && req.method === "POST") {
+    const limited = rateLimit(req, "auth-verify");
+    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
+    const input = await body(req);
+    const email = normalizeEmail(input.email);
+    const code = String(input.code ?? "").trim();
+    const challenge = db.prepare("SELECT * FROM auth_challenges WHERE email = ? AND code = ? AND expires_at > ?").get(email, code, now());
+    if (!challenge) return send(res, 401, { error: "Invalid or expired verification code." });
+
+    const timestamp = now();
+    let user = getUserByEmail(email);
+    if (!user) {
+      const invite = db.prepare("SELECT * FROM tenant_members WHERE email = ? ORDER BY created_at LIMIT 1").get(email);
+      user = {
+        id: createId("user"),
+        email,
+        tenant_id: invite?.tenant_id ?? tenantIdForEmail(email),
+        role: invite?.role ?? "Owner",
+        created_at: timestamp,
+        verified_at: timestamp,
+        password_hash: challenge.password_hash,
+        password_salt: challenge.password_salt
+      };
+    } else {
+      user = { ...user, verified_at: timestamp, password_hash: challenge.password_hash ?? user.password_hash, password_salt: challenge.password_salt ?? user.password_salt };
+    }
+    upsertUser(user);
+    db.prepare("DELETE FROM auth_challenges WHERE id = ?").run(challenge.id);
+    ensureUserWorkspace(user);
+    const session = createSession(user);
+    return send(res, 200, { token: session.access_token, refreshToken: session.refresh_token, expires_at: session.expires_at, user: publicUser(user) });
+  }
+
+  if (pathname === "/api/auth/password-login" && req.method === "POST") {
+    const limited = rateLimit(req, "password-login");
+    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
+    const input = await body(req);
+    const user = getUserByEmail(input.email);
+    if (!user || !verifyPassword(input.password ?? "", user)) return send(res, 401, { error: "Email or password is incorrect." });
+    ensureUserWorkspace(user);
+    const session = createSession(user);
+    return send(res, 200, { token: session.access_token, refreshToken: session.refresh_token, expires_at: session.expires_at, user: publicUser(user) });
+  }
+
+  if (pathname === "/api/auth/request-password-reset" && req.method === "POST") {
+    const limited = rateLimit(req, "password-reset");
+    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
+    const input = await body(req);
+    const email = normalizeEmail(input.email);
+    const passwordError = validatePassword(input.password);
+    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
+    if (passwordError) return send(res, 422, { error: passwordError });
+    const user = getUserByEmail(email);
+    if (user) {
+      const { salt, hash } = hashPassword(input.password);
+      const reset = { id: createId("reset"), email, code: makeVerificationCode(), password_hash: hash, password_salt: salt, expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), created_at: now() };
+      db.prepare("INSERT INTO password_resets (id, email, code, password_hash, password_salt, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(reset.id, reset.email, reset.code, reset.password_hash, reset.password_salt, reset.expires_at, reset.created_at);
+      await sendPasswordResetEmail(email, reset.code);
+    }
+    return send(res, 200, { ok: true, message: "If that email exists, a reset code has been sent." });
+  }
+
+  if (pathname === "/api/auth/confirm-password-reset" && req.method === "POST") {
+    const limited = rateLimit(req, "password-reset-confirm");
+    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
+    const input = await body(req);
+    const email = normalizeEmail(input.email);
+    const code = String(input.code ?? "").trim();
+    const reset = db.prepare("SELECT * FROM password_resets WHERE email = ? AND code = ? AND expires_at > ?").get(email, code, now());
+    if (!reset) return send(res, 401, { error: "Invalid or expired reset code." });
+    db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE email = ?").run(reset.password_hash, reset.password_salt, email);
+    db.prepare("DELETE FROM password_resets WHERE id = ?").run(reset.id);
+    return send(res, 200, { ok: true });
+  }
+
+  if (pathname === "/api/auth/refresh" && req.method === "POST") {
+    const input = await body(req);
+    const refreshToken = String(input.refreshToken ?? "");
+    const session = db.prepare("SELECT * FROM sessions WHERE refresh_token = ? AND revoked_at IS NULL").get(refreshToken);
+    if (!session || new Date(session.refresh_expires_at) <= new Date()) return send(res, 401, { error: "Refresh session expired." });
+    const accessToken = makeToken();
+    const expiresAt = addDays(accessTokenDays);
+    db.prepare("UPDATE sessions SET access_token = ?, expires_at = ? WHERE id = ?").run(accessToken, expiresAt, session.id);
+    const user = getUserById(session.user_id);
+    return send(res, 200, { token: accessToken, refreshToken, expires_at: expiresAt, user: publicUser(user) });
+  }
+
+  if (pathname === "/api/auth/me" && req.method === "GET") {
+    const { user } = authContext(req);
+    return send(res, 200, { user: publicUser(user) });
+  }
+
+  if (pathname === "/api/auth/logout" && req.method === "POST") {
+    const header = req.headers.authorization ?? "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    db.prepare("UPDATE sessions SET revoked_at = ? WHERE access_token = ?").run(now(), token);
+    return send(res, 200, { ok: true });
+  }
+
+  const { user, tenantId } = authContext(req);
+  if (pathname === "/api/bootstrap" && req.method === "GET") return send(res, 200, bootstrap(tenantId));
+
+  if (pathname === "/api/tenant/members" && req.method === "GET") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    return send(res, 200, { members: bootstrap(context.tenantId).members });
+  }
+
+  if (pathname === "/api/tenant/members" && req.method === "POST") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    const input = await body(req);
+    const email = normalizeEmail(input.email);
+    const role = ["Owner", "Admin", "Editor", "Viewer"].includes(input.role) ? input.role : "Viewer";
+    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
+    const invitedUser = getUserByEmail(email);
+    upsertTenantMember({ tenant_id: context.tenantId, user_id: invitedUser?.id, email, role, invited_by: context.user.id, accepted_at: invitedUser?.verified_at });
+    const tenant = db.prepare("SELECT * FROM tenants WHERE id = ?").get(context.tenantId);
+    await sendMemberInviteEmail(email, tenant, context.user, role);
+    return send(res, 201, { members: bootstrap(context.tenantId).members });
+  }
+
   if (pathname === "/api/projects" && req.method === "POST") {
     const input = await body(req);
-    const projects = await readJson("projects", []);
     const project = { id: createId("project"), tenant_id: tenantId, name: input.name, description: input.description ?? "", created_at: now(), updated_at: now() };
-    projects.push(project);
-    await writeJson("projects", projects);
+    insertProject(project);
     return send(res, 201, project);
   }
+
   if (pathname === "/api/diagrams" && req.method === "POST") {
     const input = await body(req);
-    const diagrams = await readJson("diagrams", []);
     const diagram = { id: createId("diagram"), tenant_id: tenantId, project_id: input.project_id, type: input.type, name: input.name, version: 1, created_at: now(), updated_at: now(), metadata: {}, elements: [], relationships: [] };
-    diagrams.push(diagram);
-    await writeJson("diagrams", diagrams);
+    insertDiagram(diagram);
     return send(res, 201, diagram);
   }
+
   const diagramMatch = pathname.match(/^\/api\/diagrams\/([^/]+)$/);
   if (diagramMatch && req.method === "PUT") {
     const input = await body(req);
-    const diagrams = await readJson("diagrams", []);
-    const index = diagrams.findIndex((diagram) => diagram.id === diagramMatch[1] && withTenant(diagram, tenantId));
-    if (index < 0) return send(res, 404, { error: "Diagram not found" });
-    const candidate = { ...input, tenant_id: tenantId, updated_at: now(), version: diagrams[index].version + 1 };
+    const current = db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId);
+    if (!current) return send(res, 404, { error: "Diagram not found" });
+    const candidate = { ...input, tenant_id: tenantId, updated_at: now(), version: current.version + 1 };
     const validation = validateDiagram(candidate);
     if (!validation.valid) return send(res, 422, validation);
-    diagrams[index] = candidate;
-    await writeJson("diagrams", diagrams);
-    await recordEvent(candidate, { summary: "Saved full diagram state", operations: [] }, "local-user", "save");
+    updateDiagram(candidate);
+    recordEvent(candidate, { summary: "Saved full diagram state", operations: [] }, user?.id ?? "local-user", "save");
     return send(res, 200, candidate);
   }
+
   if (pathname === "/api/ai/preview" && req.method === "POST") {
     const input = await body(req);
-    const diagrams = await readJson("diagrams", []);
-    const diagram = diagrams.find((item) => item.id === input.diagram_id && item.tenant_id === tenantId);
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(input.diagram_id, tenantId));
     if (!diagram) return send(res, 404, { error: "Diagram not found" });
     const patch = makeAiPatch(diagram, input.prompt ?? "");
     const preview = applyPatch(diagram, patch);
     const validation = validateDiagram(preview);
     return send(res, validation.valid ? 200 : 422, { patch, validation, preview });
   }
+
   if (pathname === "/api/ai/apply" && req.method === "POST") {
     const input = await body(req);
-    const diagrams = await readJson("diagrams", []);
-    const index = diagrams.findIndex((diagram) => diagram.id === input.diagram_id && diagram.tenant_id === tenantId);
-    if (index < 0) return send(res, 404, { error: "Diagram not found" });
-    const next = applyPatch(diagrams[index], input.patch);
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(input.diagram_id, tenantId));
+    if (!diagram) return send(res, 404, { error: "Diagram not found" });
+    const next = applyPatch(diagram, input.patch);
     const validation = validateDiagram(next);
     if (!validation.valid) return send(res, 422, validation);
-    diagrams[index] = next;
-    await writeJson("diagrams", diagrams);
-    await recordEvent(next, input.patch, "ai-advisor", input.patch.summary);
+    updateDiagram(next);
+    recordEvent(next, input.patch, "ai-advisor", input.patch.summary);
     return send(res, 200, next);
   }
+
   if (pathname === "/api/ai/keys" && req.method === "POST") {
     const input = await body(req);
-    const keys = await readJson("aiKeys", []);
     const item = { id: createId("key"), tenant_id: tenantId, provider: input.provider, model: input.model, display_name: input.display_name, encrypted_api_key: encryptSecret(input.api_key), active: Boolean(input.active), created_at: now() };
-    keys.push(item);
-    await writeJson("aiKeys", keys);
+    db.prepare("INSERT INTO ai_keys (id, tenant_id, provider, model, display_name, encrypted_api_key, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(item.id, item.tenant_id, item.provider, item.model, item.display_name, item.encrypted_api_key, item.active ? 1 : 0, item.created_at);
     const { encrypted_api_key, ...safe } = item;
     return send(res, 201, safe);
   }
+
   const exportMatch = pathname.match(/^\/api\/diagrams\/([^/]+)\/export\/pdf$/);
   if (exportMatch && req.method === "GET") {
-    const diagrams = await readJson("diagrams", []);
-    const diagram = diagrams.find((item) => item.id === exportMatch[1] && item.tenant_id === tenantId);
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(exportMatch[1], tenantId));
     if (!diagram) return send(res, 404, { error: "Diagram not found" });
     const pdf = Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n4 0 obj<</Length 72>>stream\nBT /F1 18 Tf 72 720 Td (${diagram.name} export - ${diagram.elements.length} elements) Tj ET\nendstream endobj\ntrailer<</Root 1 0 R>>\n%%EOF`);
     res.writeHead(200, { "content-type": "application/pdf", "content-disposition": `attachment; filename="${diagram.name}.pdf"` });
     return res.end(pdf);
   }
+
   return send(res, 404, { error: "Not found" });
 }
 
@@ -249,15 +851,19 @@ async function serveStatic(req, res, pathname) {
   createReadStream(resolved).pipe(res);
 }
 
-await seed();
+migrateSchema();
+await migrateJsonData();
+
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) return await api(req, res, url.pathname);
     return await serveStatic(req, res, url.pathname);
   } catch (error) {
+    console.error(error);
     send(res, 500, { error: error.message });
   }
 }).listen(port, () => {
   console.log(`SysML/UML modeling tool running at http://localhost:${port}`);
+  console.log(`SQLite database: ${dbPath}`);
 });
