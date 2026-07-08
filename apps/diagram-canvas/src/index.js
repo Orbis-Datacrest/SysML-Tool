@@ -20,7 +20,8 @@ const relationshipTypes = [
   ["include", "Include"], ["extend", "Extend"], ["item-flow", "Item Flow"], ["binding-connector", "Binding Connector"],
   ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
 ];
-const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textStyle: "normal" };
+const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
+const lightTextKinds = new Set(["actor", "initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node", "destruction-occurrence"]);
 const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };
 
 function id(prefix) { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
@@ -50,7 +51,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
 
   const selectedIds = () => state.selectedElementIds ?? [];
-  const nodeStyle = (node) => ({ ...defaultNodeStyle, ...(node.style ?? {}) });
+  const nodeStyle = (node) => ({ ...defaultNodeStyle, textColor: lightTextKinds.has(node.kind) ? "#f4f7fb" : defaultNodeStyle.textColor, ...(node.style ?? {}) });
   const relationshipStyle = (relationship) => ({ ...defaultRelationshipStyle, ...(relationship.style ?? {}) });
   const pointOnCanvas = (event) => {
     const rect = element.getBoundingClientRect();
@@ -90,32 +91,30 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     { key: "responsibilities", label: "Responsibilities" }
   ];
 
-  function sectionEditor(node, section, value, label) {
-    return `<textarea class="node-inline-editor compartment-editor" data-node-editor="${node.id}" data-node-section="${section}" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</textarea>`;
+  function sectionEditor(node, section, value, label, displayClass = "") {
+    const tag = section === "name" ? "span" : "div";
+    return `<${tag} class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" contenteditable="plaintext-only" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" role="textbox" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</${tag}>`;
   }
 
   function editableText(node, section, value, className, label) {
-    if (editingNode?.id === node.id && editingNode.section === section) return sectionEditor(node, section, value, label);
+    if (editingNode?.id === node.id && editingNode.section === section) return `<div class="${className}">${sectionEditor(node, section, value, label)}</div>`;
     return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${escapeHtml(value)}</div>`;
   }
 
   function renderNodeContent(node) {
-    const editingSimpleNode = editingNode?.id === node.id && editingNode.section === "name";
-    if (editingSimpleNode && (node.kind === "actor" || diamondKinds.has(node.kind) || circleKinds.has(node.kind) || ["fork-join", "fork-node", "join-node", "accept-event-action", "send-signal-action", "destruction-occurrence", "lifeline"].includes(node.kind) || packageKinds.has(node.kind) || noteKinds.has(node.kind) || ellipseKinds.has(node.kind) || roundedKinds.has(node.kind))) {
-      return sectionEditor(node, "name", node.name, `${nodeLabel(node.kind)} text`);
-    }
-    if (node.kind === "actor") return `<svg class="actor-figure" viewBox="0 0 100 126" aria-hidden="true"><circle cx="50" cy="20" r="17"></circle><path d="M50 37v50M18 51h64M50 87 19 123M50 87l31 36"></path></svg><div class="actor-name">${escapeHtml(node.name)}</div>`;
-    if (diamondKinds.has(node.kind)) return `<div class="diamond-shape"></div><div class="shape-caption centered">${escapeHtml(node.name)}</div>`;
-    if (circleKinds.has(node.kind)) return `<div class="circle-shape ${node.kind.startsWith("final") ? "final" : ""}"></div>${node.name ? `<div class="shape-caption below">${escapeHtml(node.name)}</div>` : ""}`;
-    if (["fork-join", "fork-node", "join-node"].includes(node.kind)) return `<div class="fork-join-shape"></div><div class="shape-caption below">${escapeHtml(node.name)}</div>`;
-    if (node.kind === "accept-event-action") return `<div class="event-action-shape accept"></div><div class="shape-caption centered">${escapeHtml(node.name)}</div>`;
-    if (node.kind === "send-signal-action") return `<div class="event-action-shape send"></div><div class="shape-caption centered">${escapeHtml(node.name)}</div>`;
-    if (node.kind === "destruction-occurrence") return `<div class="destruction-shape"></div><div class="shape-caption below">${escapeHtml(node.name)}</div>`;
-    if (node.kind === "lifeline") return `<div class="lifeline-head">${escapeHtml(node.name)}</div><div class="lifeline-line"></div>`;
-    if (packageKinds.has(node.kind)) return `<div class="package-tab"></div><div class="package-body"><strong>${escapeHtml(node.name)}</strong><small>«${escapeHtml(nodeLabel(node.kind))}»</small></div>`;
-    if (noteKinds.has(node.kind)) return `<div class="note-fold"></div><div class="note-content">${escapeHtml(node.name)}</div>`;
-    if (ellipseKinds.has(node.kind)) return `<div class="ellipse-content">${escapeHtml(node.name)}</div>`;
-    if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
+    const simpleName = (className, label = `${nodeLabel(node.kind)} text`) => editableText(node, "name", node.name, className, label);
+    if (node.kind === "actor") return `<svg class="actor-figure" viewBox="0 0 100 126" aria-hidden="true"><circle cx="50" cy="20" r="17"></circle><path d="M50 37v50M18 51h64M50 87 19 123M50 87l31 36"></path></svg>${simpleName("actor-name")}`;
+    if (diamondKinds.has(node.kind)) return `<div class="diamond-shape"></div>${simpleName("shape-caption centered")}`;
+    if (circleKinds.has(node.kind)) return `<div class="circle-shape ${node.kind.startsWith("final") ? "final" : ""}"></div>${simpleName("shape-caption below")}`;
+    if (["fork-join", "fork-node", "join-node"].includes(node.kind)) return `<div class="fork-join-shape"></div>${simpleName("shape-caption below")}`;
+    if (node.kind === "accept-event-action") return `<div class="event-action-shape accept"></div>${simpleName("shape-caption centered")}`;
+    if (node.kind === "send-signal-action") return `<div class="event-action-shape send"></div>${simpleName("shape-caption centered")}`;
+    if (node.kind === "destruction-occurrence") return `<div class="destruction-shape"></div>${simpleName("shape-caption below")}`;
+    if (node.kind === "lifeline") return `${simpleName("lifeline-head")}<div class="lifeline-line"></div>`;
+    if (packageKinds.has(node.kind)) return `<div class="package-tab"></div><div class="package-body"><strong>${simpleName("")}</strong><small>«${escapeHtml(nodeLabel(node.kind))}»</small></div>`;
+    if (noteKinds.has(node.kind)) return `<div class="note-fold"></div>${simpleName("note-content")}`;
+    if (ellipseKinds.has(node.kind)) return simpleName("ellipse-content");
+    if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${simpleName("")}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
     const title = editableText(node, "name", node.name, "node-title-text", "Name");
     return `<div class="node-title" data-edit-section="name">${title}${node.locked ? `<span class="lock-indicator" title="Locked">●</span>` : ""}<div class="node-stereotype">«${escapeHtml(nodeLabel(node.kind))}»</div></div>
       <div class="node-compartments">${compartmentDefinitions.map(({ key, label }) => {
@@ -214,7 +213,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const bounds = selectionBounds(diagram.elements, selectedIds());
     if (!bounds) return null;
     const rect = element.getBoundingClientRect();
-    const width = selectedIds().length > 1 ? 344 : 380;
+    const width = 650;
     return {
       x: clamp(rect.left + bounds.left * zoom - element.scrollLeft, rect.left + 8, rect.right - width - 8),
       y: clamp(rect.top + bounds.top * zoom - element.scrollTop - 48, rect.top + 8, rect.bottom - 48)
@@ -235,14 +234,20 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const selected = diagram.elements.filter((node) => selectedIds().includes(node.id));
     if (!selected.length) return "";
     const style = nodeStyle(selected[0]);
-    const allBold = selected.every((node) => nodeStyle(node).textStyle === "bold");
     const position = toolbarPosition(diagram);
     return `<div class="format-toolbar" style="left:${position.x}px;top:${position.y}px" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
       <label title="Border color">Border <input data-style="borderColor" type="color" value="${style.borderColor}"></label>
       <label title="Fill color">Fill <input data-style="fillColor" type="color" value="${style.fillColor}"></label>
       <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <button data-style-button="textStyle" class="format-button ${allBold ? "active" : ""}" title="Toggle bold text for all selected elements"><strong>B</strong></button>
+      <label title="Text color">Text <input data-style="textColor" type="color" value="${style.textColor}"></label>
+      <label title="Text size">Size <select data-style="textSize">${[10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32].map((size) => `<option value="${size}" ${style.textSize === size ? "selected" : ""}>${size}px</option>`).join("")}</select></label>
+      <label title="Text style">Style <select data-style="textStyle">
+        <option value="normal" ${style.textStyle === "normal" ? "selected" : ""}>Normal</option>
+        <option value="bold" ${style.textStyle === "bold" ? "selected" : ""}>Bold</option>
+        <option value="italic" ${style.textStyle === "italic" ? "selected" : ""}>Italic</option>
+        <option value="bold-italic" ${style.textStyle === "bold-italic" ? "selected" : ""}>Bold italic</option>
+      </select></label>
     </div>`;
   }
 
@@ -295,7 +300,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         ${selectedIds().length > 1 && (selectionFrame ?? selectionBounds(diagram.elements, selectedIds())) ? (() => { const bounds = selectionFrame ?? selectionBounds(diagram.elements, selectedIds()); return `<div class="group-selection-box" data-selection-area style="left:${bounds.left}px;top:${bounds.top}px;width:${bounds.right - bounds.left}px;height:${bounds.bottom - bounds.top}px" title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>`; })() : ""}
         ${diagram.elements.map((node) => {
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
-          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;--node-fill:${style.fillColor};--node-border:${style.borderColor};--node-border-width:${style.borderWidth}px;--node-font-weight:${style.textStyle === "bold" ? 700 : 400}">
+          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;--node-fill:${style.fillColor};--node-border:${style.borderColor};--node-border-width:${style.borderWidth}px;--node-text-color:${style.textColor};--node-text-size:${style.textSize}px;--node-font-weight:${style.textStyle.includes("bold") ? 700 : 400};--node-font-style:${style.textStyle.includes("italic") ? "italic" : "normal"}">
             ${renderNodeContent(node)}
             ${selected ? `<span class="connector-handle connector-out" data-handle="${node.id}" title="Drag to create relationship"></span><span class="connector-handle connector-in"></span>` : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
@@ -363,8 +368,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); input.blur(); }
         if (event.key === "Escape") { event.preventDefault(); editingNode = null; render(); }
       });
-      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.dataset.nodeSection, input.value), { once: true });
-      requestAnimationFrame(() => { input.focus(); input.select(); });
+      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.dataset.nodeSection, input.textContent), { once: true });
+      requestAnimationFrame(() => {
+        input.focus();
+        const selection = window.getSelection();
+        const range = document.createRange(); range.selectNodeContents(input);
+        selection.removeAllRanges(); selection.addRange(range);
+      });
     });
     element.querySelector("[data-selection-area]")?.addEventListener("pointerdown", startSelectionGesture);
     element.querySelectorAll("[data-style-button]").forEach((button) => button.addEventListener("click", () => {
@@ -378,7 +388,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function beginNodeEditing(event, nodeId, section = "name") {
     event.preventDefault(); event.stopPropagation();
-    editingNode = { id: nodeId, section: section || "name" };
+    editingNode = { id: nodeId, section: section || "name", clientX: event.clientX, clientY: event.clientY };
     gesture = null;
     render();
   }
@@ -487,6 +497,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function deleteSelection() { if (selectedIds().length) executeCommand("delete"); else deleteSelectedRelationship(); }
 
   element.addEventListener("pointerdown", (event) => {
+    if (editingNode && !event.target.closest("[data-node-editor]")) {
+      const editor = element.querySelector("[data-node-editor]");
+      if (editor) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editor.textContent);
+      return;
+    }
     if (event.pointerType === "touch") {
       touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPoints.size === 2) {
@@ -521,7 +536,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!input) return;
     event.stopPropagation();
     if (input.dataset.style) {
-      const property = input.dataset.style === "fillColor" ? "--node-fill" : "--node-border";
+      const property = { fillColor: "--node-fill", borderColor: "--node-border", textColor: "--node-text-color" }[input.dataset.style];
+      if (!property) return;
       element.querySelectorAll(".diagram-node.selected").forEach((node) => node.style.setProperty(property, input.value));
     }
     if (input.dataset.relationshipStyle === "color") element.querySelector(".relationship-line.selected")?.style.setProperty("--relationship-color", input.value);
@@ -530,7 +546,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const input = event.target.closest("[data-style],[data-relationship-style]");
     if (!input) return;
     event.stopPropagation();
-    if (input.dataset.style) applyStyle(input.dataset.style, input.type === "color" ? input.value : Number(input.value));
+    if (input.dataset.style) {
+      const numeric = input.dataset.style === "borderWidth" || input.dataset.style === "textSize";
+      applyStyle(input.dataset.style, input.type === "color" ? input.value : numeric ? Number(input.value) : input.value);
+    }
     if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, input.value);
   });
   element.addEventListener("scroll", positionFormattingToolbar, { passive: true });
@@ -637,7 +656,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   });
 
   window.addEventListener("keydown", (event) => {
-    const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName); if (editing) return;
+    const activeElement = document.activeElement;
+    const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement?.tagName)
+      || activeElement?.isContentEditable
+      || Boolean(event.target.closest?.("[contenteditable='true'],[contenteditable='plaintext-only'],[data-node-editor]"));
+    if (editing) return;
     const modifier = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
     if (event.code === "Space") { spaceHeld = true; if (!editing) event.preventDefault(); }
     if (modifier && key === "a") { event.preventDefault(); setSelection(state.diagram.elements.map((node) => node.id)); }
