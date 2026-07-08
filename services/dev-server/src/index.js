@@ -981,17 +981,17 @@ async function api(req, res, urlOrPath) {
     return send(res, 200, { project: restoredProject, diagrams });
   }
 
-  const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
-  if (projectMatch && req.method === "PUT") {
-    const current = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectMatch[1], tenantId);
-    if (!current) return send(res, 404, { error: "Project not found" });
-    const input = await body(req);
-    const name = String(input.name ?? "").trim();
-    if (!name) return send(res, 422, { error: "Project name is required" });
-    const project = { ...current, name, description: String(input.description ?? current.description), updated_at: now() };
-    updateProject(project);
-    return send(res, 200, project);
-  }
+  // const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
+  // if (projectMatch && req.method === "PUT") {
+  //   const current = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectMatch[1], tenantId);
+  //   if (!current) return send(res, 404, { error: "Project not found" });
+  //   const input = await body(req);
+  //   const name = String(input.name ?? "").trim();
+  //   if (!name) return send(res, 422, { error: "Project name is required" });
+  //   const project = { ...current, name, description: String(input.description ?? current.description), updated_at: now() };
+  //   updateProject(project);
+  //   return send(res, 200, project);
+  // }
 
   if (pathname === "/api/diagrams" && req.method === "POST") {
     const input = await body(req);
