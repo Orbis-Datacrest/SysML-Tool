@@ -13,6 +13,8 @@ const state = {
   refreshToken: localStorage.getItem("sysml.refreshToken") ?? "",
   user: null,
   view: "dashboard",
+  mobilePanel: null,
+  sidebarOpen: window.matchMedia("(min-width: 768px)").matches,
   historyOpen: false,
   versionHistory: [],
   settings: { theme: localStorage.getItem("sysml.theme") ?? "dark" },
@@ -192,11 +194,13 @@ function renderShell() {
   document.querySelector("#app").innerHTML = `
     <header class="topbar">
       <div class="topbar-left">
+        ${state.view === "editor" ? `<button id="sidebar-toggle" class="icon-button" title="${state.sidebarOpen ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarOpen ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-sidebar" aria-expanded="${state.sidebarOpen}">☰</button>` : ""}
         <button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span>SysML Studio</strong></button>
         ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">💾</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
         ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
+        ${state.view === "editor" ? `<button id="ai-sidebar-toggle" class="icon-button" title="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-label="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-controls="ai-advisor-sidebar" aria-expanded="${state.mobilePanel === "advisor"}">✦</button>` : ""}
         ${state.view === "editor" ? `<button id="history-toggle" class="icon-button" title="Version History" aria-label="Version History">🕘</button>` : ""}
         <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? "🌙" : "☀️"}</button>
         ${state.view === "editor" ? `<div class="share-control">
@@ -212,24 +216,27 @@ function renderShell() {
             <button id="copy-project-link" class="copy-project-link" type="button">Copy project link</button>
           </div>
         </div>` : ""}
-        <section id="import-export" class="topbar-export"></section>
+        <section id="topbar-import-export" class="topbar-export"></section>
         ${state.view === "dashboard" ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
     </header>
     ${state.view === "editor" ? `
-      <main class="workspace">
-        <aside class="left-rail">
+      <main class="workspace ${state.sidebarOpen ? "sidebar-open" : ""} ${state.mobilePanel === "advisor" ? "advisor-open" : ""}">
+        <aside id="project-tools-sidebar" class="left-rail ${state.sidebarOpen ? "drawer-open" : ""}" aria-label="Project tools">
+          <div class="mobile-drawer-header mobile-only"><strong>Project tools</strong><button class="close-mobile-panel" aria-label="Close project tools">×</button></div>
           <section id="project-explorer"></section>
           <section id="element-palette"></section>
           <section id="properties-panel"></section>
-          <section id="import-export"></section>
+          <section id="drawer-import-export" class="drawer-import-export"></section>
           <section id="auth-tenant-settings"></section>
           <section id="left-account" class="left-account"></section>
         </aside>
         <section id="diagram-canvas" class="canvas-host"></section>
-        <aside class="right-rail">
+        <aside id="ai-advisor-sidebar" class="right-rail ${state.mobilePanel === "advisor" ? "drawer-open" : ""}" aria-label="AI advisor">
+          <div class="mobile-drawer-header mobile-only"><strong>AI advisor</strong><button class="close-mobile-panel" aria-label="Close AI advisor">×</button></div>
           <section id="ai-advisor"></section>
         </aside>
+        <button class="workspace-drawer-backdrop ${state.mobilePanel === "advisor" ? "advisor-backdrop" : ""} ${state.sidebarOpen ? "sidebar-backdrop" : ""}" aria-label="Close open panel"></button>
       </main>
     ` : `
       <main class="dashboard-host">
@@ -269,7 +276,8 @@ function renderShell() {
     mountMfe("element-palette", document.querySelector("#element-palette"), context);
     mountMfe("diagram-canvas", document.querySelector("#diagram-canvas"), context);
     mountMfe("ai-advisor", document.querySelector("#ai-advisor"), context);
-      mountMfe("import-export", document.querySelector("#import-export"), context);
+    mountMfe("import-export", document.querySelector("#topbar-import-export"), context);
+    mountMfe("import-export", document.querySelector("#drawer-import-export"), context);
     mountMfe("auth-tenant-settings", document.querySelector("#auth-tenant-settings"), context);
     mountMfe("auth-session", document.querySelector("#left-account"), context);
   }
@@ -284,6 +292,20 @@ function renderShell() {
   document.querySelector("#brand-home")?.addEventListener("click", () => {
     if (state.view === "editor") showDashboard();
   });
+  const setMobilePanel = (panel) => {
+    state.mobilePanel = state.mobilePanel === panel ? null : panel;
+    renderShell();
+  };
+  document.querySelector("#sidebar-toggle")?.addEventListener("click", () => {
+    state.sidebarOpen = !state.sidebarOpen;
+    renderShell();
+  });
+  document.querySelector("#ai-sidebar-toggle")?.addEventListener("click", () => setMobilePanel("advisor"));
+  document.querySelectorAll(".close-mobile-panel,.workspace-drawer-backdrop").forEach((button) => button.addEventListener("click", () => {
+    state.mobilePanel = null;
+    state.sidebarOpen = false;
+    renderShell();
+  }));
   document.querySelector("#history-toggle")?.addEventListener("click", async () => {
     await loadVersionHistory();
     state.historyOpen = true;

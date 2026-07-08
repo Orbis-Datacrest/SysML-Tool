@@ -30,6 +30,8 @@ function escapeHtml(value = "") {
 
 registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram }) => {
   let zoom = 1;
+  const touchPoints = new Map();
+  let pinch = null;
   let gesture = null;
   let connectDrag = null;
   let contextMenu = null;
@@ -485,6 +487,21 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function deleteSelection() { if (selectedIds().length) executeCommand("delete"); else deleteSelectedRelationship(); }
 
   element.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") {
+      touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touchPoints.size === 2) {
+        const [a, b] = [...touchPoints.values()];
+        pinch = { distance: Math.hypot(b.x - a.x, b.y - a.y), zoom };
+        gesture = null;
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.pointerType === "touch" && !event.target.closest(".diagram-node,[data-rel]")) {
+      event.preventDefault();
+      gesture = { type: "pan", startX: event.clientX, startY: event.clientY, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
+      return;
+    }
     if ((event.button === 1 || (event.button === 0 && spaceHeld)) && !event.target.closest(".diagram-node")) {
       event.preventDefault(); gesture = { type: "pan", startX: event.clientX, startY: event.clientY, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop }; return;
     }
@@ -547,6 +564,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   });
 
   window.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "touch" && touchPoints.has(event.pointerId)) {
+      touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pinch && touchPoints.size >= 2) {
+        const [a, b] = [...touchPoints.values()];
+        const distance = Math.hypot(b.x - a.x, b.y - a.y);
+        setZoom(pinch.zoom * distance / Math.max(1, pinch.distance), (a.x + b.x) / 2, (a.y + b.y) / 2);
+        return;
+      }
+    }
     if (connectDrag) { const point = pointOnCanvas(event); connectDrag.x2 = point.x; connectDrag.y2 = point.y; render(); return; }
     if (!gesture) return;
     if (gesture.type === "pan") { element.scrollLeft = gesture.scrollLeft - (event.clientX - gesture.startX); element.scrollTop = gesture.scrollTop - (event.clientY - gesture.startY); return; }
@@ -572,6 +598,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   });
 
   window.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "touch") {
+      touchPoints.delete(event.pointerId);
+      if (touchPoints.size < 2) pinch = null;
+    }
     if (connectDrag) {
       const targetId = event.target.closest?.("[data-node]")?.dataset.node;
       if (targetId && targetId !== connectDrag.sourceId) {
@@ -599,6 +629,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     // A plain node click must keep its DOM target intact so the browser can
     // recognize the second click and dispatch dblclick for inline editing.
     if (completedGesture.type === "marquee") render();
+  });
+  window.addEventListener("pointercancel", (event) => {
+    touchPoints.delete(event.pointerId);
+    if (touchPoints.size < 2) pinch = null;
+    gesture = null;
   });
 
   window.addEventListener("keydown", (event) => {
