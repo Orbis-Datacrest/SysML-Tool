@@ -26,6 +26,7 @@ const state = {
   selectedRelationshipId: null,
   relationshipKind: "association",
   saveStatus: "",
+  shareDraft: { email: "", role: "Viewer" },
   history: [],
   future: []
 };
@@ -33,6 +34,18 @@ const state = {
 const bus = createEventBus();
 let autoSaveTimer = null;
 applyTheme(state.settings.theme);
+
+// Dismiss sharing without re-rendering it, so an unsent email/role draft remains intact.
+document.addEventListener("pointerdown", (event) => {
+  const popover = document.querySelector("#share-popover");
+  if (popover && !popover.hidden && !event.target.closest(".share-control")) popover.hidden = true;
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    const popover = document.querySelector("#share-popover");
+    if (popover && !popover.hidden) popover.hidden = true;
+  }
+});
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[character]);
@@ -161,6 +174,8 @@ async function saveCurrentDiagram({ snapshot = false } = {}) {
     updateSaveStatus(snapshot ? "Saving…" : "Auto-saving…");
     const saved = await api.saveDiagram(state.diagram, { snapshot });
     syncSavedDiagram(saved);
+    await loadModelRepository(state.project?.id);
+    bus.emit("repository:changed", state.modelRepository);
     updateSaveStatus(snapshot ? "Saved milestone" : "Saved");
     if (snapshot) await loadVersionHistory();
     setTimeout(() => {
@@ -249,7 +264,7 @@ function renderShell() {
             <div class="share-popover-header"><div><strong>Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
             <form id="share-form">
               <label for="share-email">Invite by email</label>
-              <div class="share-invite-row"><input id="share-email" type="email" autocomplete="email" placeholder="name@example.com" required><select id="share-role" aria-label="Access level"><option value="Viewer">Viewer</option><option value="Commenter">Commenter</option><option value="Editor">Editor</option></select></div>
+              <div class="share-invite-row"><input id="share-email" type="email" autocomplete="email" value="${escapeHtml(state.shareDraft.email)}" placeholder="name@example.com" required><select id="share-role" aria-label="Access level"><option value="Viewer" ${state.shareDraft.role === "Viewer" ? "selected" : ""}>Viewer</option><option value="Commenter" ${state.shareDraft.role === "Commenter" ? "selected" : ""}>Commenter</option><option value="Editor" ${state.shareDraft.role === "Editor" ? "selected" : ""}>Editor</option></select></div>
               <p id="share-role-help" class="share-role-help">Can view the project but cannot make changes.</p>
               <button class="primary share-send" type="submit">Send invite</button>
             </form>
@@ -382,9 +397,15 @@ function renderShell() {
     Commenter: "Can view the project and leave comments.",
     Editor: "Can edit diagrams and project content."
   };
+  document.querySelector("#share-email")?.addEventListener("input", (event) => {
+    state.shareDraft.email = event.target.value;
+  });
   document.querySelector("#share-role")?.addEventListener("change", (event) => {
+    state.shareDraft.role = event.target.value;
     document.querySelector("#share-role-help").textContent = shareRoleHelp[event.target.value];
   });
+  const shareRoleHelpTarget = document.querySelector("#share-role-help");
+  if (shareRoleHelpTarget) shareRoleHelpTarget.textContent = shareRoleHelp[state.shareDraft.role];
   document.querySelector("#share-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = event.currentTarget.querySelector("button[type='submit']");
@@ -392,8 +413,9 @@ function renderShell() {
     try {
       await api.request(`/api/projects/${state.project.id}/shares`, {
         method: "POST",
-        body: JSON.stringify({ email: document.querySelector("#share-email").value, role: document.querySelector("#share-role").value })
+        body: JSON.stringify({ email: state.shareDraft.email, role: state.shareDraft.role })
       });
+      state.shareDraft.email = "";
       document.querySelector("#share-email").value = "";
       sharePopover.hidden = true;
       bus.emit("toast", "Project invitation sent");
@@ -490,6 +512,7 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
   try {
     await loadModelRepository(projectId);
+    bus.emit("repository:changed", state.modelRepository);
   } catch (error) {
     console.warn("Using the diagram-derived model repository because model loading failed", error);
   }

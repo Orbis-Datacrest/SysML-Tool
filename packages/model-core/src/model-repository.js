@@ -17,7 +17,7 @@ const legacyAliases = {
 };
 
 const layoutKeys = new Set(["x", "y", "width", "height", "style", "locked", "groupId"]);
-const routeKeys = new Set(["style", "routing", "waypoints"]);
+const routeKeys = new Set(["style", "routing", "waypoints", "sourceAnchor", "targetAnchor", "labelPosition", "roleLabel", "multiplicity", "sourceMultiplicity"]);
 
 export const CURRENT_MODEL_SCHEMA_VERSION = 2;
 
@@ -99,7 +99,7 @@ export function hydrateDiagram(diagram, repository, view) {
     elements: (view.element_refs ?? []).flatMap((reference) => {
       const model = elementsById.get(reference.model_element_id);
       if (!model) return [];
-      return [{ id: model.id, model_element_id: model.id, kind: model.kind, name: model.name, properties: model.semantic ?? {}, stereotypes: model.stereotypes ?? [], ...reference }];
+      return [{ id: model.id, model_element_id: model.id, kind: model.kind, name: model.name, owner_id: model.owner_id ?? null, package_id: model.package_id ?? null, properties: model.semantic ?? {}, stereotypes: model.stereotypes ?? [], ...reference }];
     }),
     relationships: (view.relationship_refs ?? []).flatMap((reference) => {
       const model = relationshipsById.get(reference.model_relationship_id);

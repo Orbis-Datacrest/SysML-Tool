@@ -1,6 +1,7 @@
 import { diagramCatalog } from "./diagram-catalog.js";
 
 export * from "./model-repository.js";
+export * from "./validation-engine.js";
 
 export { commonElements, diagramCatalog, isPaletteItemAllowed, paletteForDiagram } from "./diagram-catalog.js";
 

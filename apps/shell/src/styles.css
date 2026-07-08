@@ -178,6 +178,21 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .project-title-editor { border-color: var(--accent-2); background: #0d1624; outline: 3px solid rgb(90 167 255 / 16%); }
 .project-description { margin: 2px 8px 0; color: var(--muted); font-size: 11px; }
 .diagram-type-panel { padding-top: 15px; padding-bottom: 15px; }
+.validation-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.validation-heading h2 { margin: 0; }
+.validation-heading > span { min-width: 22px; padding: 2px 6px; border-radius: 999px; background: var(--panel-3); color: var(--muted); font-size: 10px; text-align: center; }
+.validation-panel select { min-width: 0; padding: 6px; font-size: 11px; }
+.validation-panel { padding-bottom: 14px; }
+.validation-panel > select { margin-top: 9px; }
+.validation-count.has-errors { background: #7f1d1d; color: #fecaca; }
+.validation-list { max-height: 240px; margin-top: 7px; overflow: auto; }
+.validation-item { width: 100%; display: grid; grid-template-columns: 9px 1fr; gap: 6px; padding: 7px 3px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
+.validation-item:hover { background: var(--panel-2); }
+.validation-item strong, .validation-item small { display: block; font-size: 10px; line-height: 1.35; }
+.validation-item small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.severity-dot { width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: #60a5fa; }
+.validation-item.error .severity-dot { background: #ef4444; }.validation-item.warning .severity-dot { background: #f59e0b; }
+.validation-clean { color: #4ade80; font-size: 10px; }
 .diagram-select-wrap { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) 20px; align-items: center; height: 42px; border: 1px solid #31415a; border-radius: 8px; background: #0d1624; transition: border-color 120ms ease, box-shadow 120ms ease; }
 .diagram-select-wrap:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgb(90 167 255 / 13%); }
 .diagram-family-badge { display: grid; place-items: center; width: 22px; height: 22px; margin: 0 0 0 7px; border-radius: 5px; background: #223a59; color: #b9d8ff; font-size: 11px; font-weight: 800; }
@@ -256,8 +271,10 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .lock-indicator { float: right; margin: 4px 0 0 8px; color: #4d6078; font-size: 8px; }
 .connector-handle { position: absolute; top: 50%; width: 12px; height: 12px; border: 2px solid #102016; border-radius: 999px; background: #f5f9f2; transform: translateY(-50%); z-index: 4; }
 .connector-handle:hover { background: var(--accent); box-shadow: 0 0 0 6px rgb(57 184 168 / 20%); cursor: crosshair; }
-.connector-out { right: -7px; }
-.connector-in { left: -7px; pointer-events: none; }
+.connector-right { right: -7px; }
+.connector-left { left: -7px; }
+.connector-top { top: -7px; left: 50%; transform: translate(-50%, 0); }
+.connector-bottom { top: auto; bottom: -7px; left: 50%; transform: translate(-50%, 0); }
 .resize-handle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border: 2px solid white; border-radius: 3px; background: var(--accent-2); cursor: nwse-resize; z-index: 5; }
 .relationship-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .relationship-hit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
@@ -267,6 +284,8 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 :root[data-theme="light"] .relationship-label { fill: #334155; }
 .relationship-label.selected { fill: var(--warning); font-weight: 700; }
 .relationship-preview { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 8 6; pointer-events: none; }
+.route-handle { fill: #fff; stroke: var(--warning); stroke-width: 2; pointer-events: all; cursor: move; }
+.route-handle.endpoint { fill: var(--warning); cursor: crosshair; }
 .canvas-chrome { position: sticky; top: 0; left: 0; z-index: 30; width: 100%; height: 64px; margin-bottom: -64px; pointer-events: none; }
 .palette-canvas-preview { position: fixed; z-index: 70; display: grid; width: 290px; justify-items: center; gap: 9px; pointer-events: none; }
 .palette-preview-name { padding: 5px 11px; border: 1px solid #456284; border-radius: 999px; background: rgb(8 12 19 / 96%); color: #f3f7fd; box-shadow: 0 6px 18px rgb(0 0 0 / 30%); font-size: 12px; font-weight: 750; }
@@ -299,6 +318,7 @@ button.danger:hover { background: #4a202a; border-color: var(--danger); }
 .relationship-toolbar select { width: auto; max-width: 190px; }
 .relationship-toolbar label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
 .relationship-toolbar input[type="color"] { width: 28px; height: 26px; padding: 2px; }
+.relationship-toolbar input:not([type="color"]) { width: 92px; padding: 5px 7px; }
 .canvas-content { position: relative; background-image: linear-gradient(#1c2636 1px, transparent 1px), linear-gradient(90deg, #1c2636 1px, transparent 1px); background-size: 20px 20px; }
 .canvas-host.drag-target-active { box-shadow: inset 0 0 0 3px var(--accent-2); }
 .canvas-host.drag-target-active::after { position: fixed; top: 68px; left: 50%; z-index: 80; padding: 7px 14px; content: "Drop element on canvas"; border-radius: 999px; background: #2d6eb3; color: white; font-size: 12px; font-weight: 700; pointer-events: none; }

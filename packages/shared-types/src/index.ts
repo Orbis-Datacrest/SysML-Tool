@@ -153,8 +153,14 @@ export interface DiagramElementReference {
 
 export interface DiagramRelationshipReference {
   model_relationship_id: string;
-  routing?: string;
+  routing?: "orthogonal" | "manual";
   waypoints?: Array<{ x: number; y: number }>;
+  sourceAnchor?: { side: "top" | "right" | "bottom" | "left"; offset?: number; portId?: string };
+  targetAnchor?: { side: "top" | "right" | "bottom" | "left"; offset?: number; portId?: string };
+  labelPosition?: number;
+  roleLabel?: string;
+  multiplicity?: string;
+  sourceMultiplicity?: string;
   style?: Record<string, unknown>;
   display?: Record<string, unknown>;
 }
@@ -192,6 +198,12 @@ export interface DiagramRelationship {
   source_id: string;
   target_id: string;
   label?: string;
+  routing?: "orthogonal" | "manual";
+  waypoints?: Array<{ x: number; y: number }>;
+  sourceAnchor?: { side: "top" | "right" | "bottom" | "left"; offset?: number; portId?: string };
+  targetAnchor?: { side: "top" | "right" | "bottom" | "left"; offset?: number; portId?: string };
+  roleLabel?: string;
+  multiplicity?: string;
   properties: Record<string, unknown>;
 }
 

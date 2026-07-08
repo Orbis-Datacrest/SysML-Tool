@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { applyPatch, createId, decomposeDiagram, hydrateDiagram, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
+import { toVectorPdf } from "../../../apps/import-export/src/exporters.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const configuredDataDir = process.env.DATA_DIR ?? ".data";
@@ -1248,7 +1249,7 @@ async function api(req, res, urlOrPath) {
   if (exportMatch && req.method === "GET") {
     const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(exportMatch[1], tenantId));
     if (!diagram) return send(res, 404, { error: "Diagram not found" });
-    const pdf = Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n4 0 obj<</Length 72>>stream\nBT /F1 18 Tf 72 720 Td (${diagram.name} export - ${diagram.elements.length} elements) Tj ET\nendstream endobj\ntrailer<</Root 1 0 R>>\n%%EOF`);
+    const pdf = Buffer.from(toVectorPdf(diagram));
     res.writeHead(200, { "content-type": "application/pdf", "content-disposition": `attachment; filename="${diagram.name}.pdf"` });
     return res.end(pdf);
   }

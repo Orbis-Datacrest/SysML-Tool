@@ -5,6 +5,7 @@ import {
   groupElements, moveSelection, nodesInRect, removeElements, reorderElements,
   selectionBounds, snap, ungroupElements
 } from "./canvas-model.js";
+import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
 
 const CANVAS = { width: 5000, height: 4000 };
 const ZOOM = { minimum: 0.25, maximum: 2.5 };
@@ -152,13 +153,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     node.height = clamp(50 + sections.reduce((height, section) => height + Math.max(34, section.length * 17 + 21), 0), 170, 620);
   }
 
-  function relationshipPath(source, target) {
-    const start = { x: source.x + source.width, y: source.y + source.height / 2 };
-    const end = { x: target.x, y: target.y + target.height / 2 };
-    const midX = (start.x + end.x) / 2;
-    return { start, end, midX, d: `M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}` };
-  }
-
   function relationshipDecoration(type) {
     const decorations = {
       association: {},
@@ -192,20 +186,25 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function renderRelationships(diagram) {
+    const earlierSegments = [];
     return `<svg class="relationship-layer" width="${CANVAS.width}" height="${CANVAS.height}" aria-label="Diagram relationships">${renderMarkerDefinitions()}
       ${(diagram.relationships ?? []).map((relationship) => {
         const source = diagram.elements.find((node) => node.id === relationship.source_id);
         const target = diagram.elements.find((node) => node.id === relationship.target_id);
         if (!source || !target) return "";
-        const path = relationshipPath(source, target);
+        const points = relationshipRoute(relationship, diagram.elements, { existingSegments: earlierSegments });
+        const d = routeToJumpPath(points, earlierSegments); earlierSegments.push(...segments(points));
+        const labelPoint = pointAlongRoute(points, relationship.labelPosition ?? 0.5);
         const decoration = relationshipDecoration(relationship.kind);
         const style = relationshipStyle(relationship);
         const selected = state.selectedRelationshipId === relationship.id;
-        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${path.d}"></path>
-          <path class="relationship-line ${selected ? "selected" : ""}" d="${path.d}" style="--relationship-color:${style.color};--relationship-width:${style.width}px" stroke-dasharray="${decoration.dashed ? "7 6" : "0"}" ${decoration.start ? `marker-start="url(#${decoration.start})"` : ""} ${decoration.end ? `marker-end="url(#${decoration.end})"` : ""}></path>
-          <text class="relationship-label ${selected ? "selected" : ""}" data-rel="${relationship.id}" x="${path.midX}" y="${(path.start.y + path.end.y) / 2 - 10}">${escapeHtml(relationship.label || relationshipTypes.find(([type]) => type === relationship.kind)?.[1] || relationship.kind)}</text>`;
+        const labels = [relationship.label || relationshipTypes.find(([type]) => type === relationship.kind)?.[1] || relationship.kind, relationship.roleLabel, relationship.multiplicity].filter(Boolean).join("  ");
+        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${d}"></path>
+          <path class="relationship-line ${selected ? "selected" : ""}" d="${d}" style="--relationship-color:${style.color};--relationship-width:${style.width}px" stroke-dasharray="${decoration.dashed ? "7 6" : "0"}" ${decoration.start ? `marker-start="url(#${decoration.start})"` : ""} ${decoration.end ? `marker-end="url(#${decoration.end})"` : ""}></path>
+          <text class="relationship-label ${selected ? "selected" : ""}" data-rel="${relationship.id}" x="${labelPoint.x}" y="${labelPoint.y - 9}">${escapeHtml(labels)}</text>
+          ${selected ? points.map((point, index) => `<circle class="route-handle ${index === 0 || index === points.length - 1 ? "endpoint" : ""}" data-route-handle="${relationship.id}" data-route-index="${index}" cx="${point.x}" cy="${point.y}" r="${index === 0 || index === points.length - 1 ? 6 : 5}"></circle>`).join("") : ""}`;
       }).join("")}
-      ${connectDrag ? `<path class="relationship-preview" d="M ${connectDrag.x1} ${connectDrag.y1} C ${(connectDrag.x1 + connectDrag.x2) / 2} ${connectDrag.y1}, ${(connectDrag.x1 + connectDrag.x2) / 2} ${connectDrag.y2}, ${connectDrag.x2} ${connectDrag.y2}" marker-end="url(#open-arrow)"></path>` : ""}
+      ${connectDrag ? `<path class="relationship-preview" d="${routeToPath([connectDrag.start, { x: connectDrag.x2, y: connectDrag.start.y }, { x: connectDrag.x2, y: connectDrag.y2 }])}" marker-end="url(#open-arrow)"></path>` : ""}
     </svg>`;
   }
 
@@ -260,6 +259,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <select data-relationship-style="kind" title="Relation type">${relationshipTypes.map(([type, label]) => `<option value="${type}" ${relationship.kind === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       <label title="Line thickness">Line <select data-relationship-style="width">${[1, 2, 3, 4, 5].map((width) => `<option value="${width}" ${style.width === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
       <label title="Line color">Color <input data-relationship-style="color" type="color" value="${style.color}"></label>
+      <input data-relationship-text="label" value="${escapeHtml(relationship.label ?? "")}" placeholder="Label" title="Connector label">
+      <input data-relationship-text="roleLabel" value="${escapeHtml(relationship.roleLabel ?? "")}" placeholder="Role" title="Role label">
+      <input data-relationship-text="multiplicity" value="${escapeHtml(relationship.multiplicity ?? "")}" placeholder="0..*" title="Multiplicity">
+      <button data-relationship-command="reroute" title="Discard waypoints and route around obstacles">Reroute</button>
       <button data-relationship-command="delete" class="danger" title="Delete connection">Delete</button>
     </div>`;
   }
@@ -302,7 +305,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
           return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;--node-fill:${style.fillColor};--node-border:${style.borderColor};--node-border-width:${style.borderWidth}px;--node-text-color:${style.textColor};--node-text-size:${style.textSize}px;--node-font-weight:${style.textStyle.includes("bold") ? 700 : 400};--node-font-style:${style.textStyle.includes("italic") ? "italic" : "normal"}">
             ${renderNodeContent(node)}
-            ${selected ? `<span class="connector-handle connector-out" data-handle="${node.id}" title="Drag to create relationship"></span><span class="connector-handle connector-in"></span>` : ""}
+            ${selected ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
           </div>`;
         }).join("")}
@@ -339,8 +342,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
       const source = state.diagram.elements.find((node) => node.id === handle.dataset.handle);
-      connectDrag = { sourceId: source.id, kind: activeRelationshipKind ?? "directional-association", label: activeRelationshipLabel ?? "", x1: source.x + source.width, y1: source.y + source.height / 2, x2: source.x + source.width + 80, y2: source.y + source.height / 2 };
+      const sourceAnchor = { side: handle.dataset.side, offset: 0.5 }; const start = anchorPoint(source, sourceAnchor);
+      connectDrag = { sourceId: source.id, sourceAnchor, kind: activeRelationshipKind ?? "directional-association", label: activeRelationshipLabel ?? "", start, x2: start.x, y2: start.y };
       gesture = null; contextMenu = null; relationshipToolbar = null; setSelection([source.id]);
+    }));
+    element.querySelectorAll("[data-route-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault(); event.stopPropagation();
+      const relationship = state.diagram.relationships.find((item) => item.id === handle.dataset.routeHandle);
+      const points = relationshipRoute(relationship, state.diagram.elements);
+      gesture = { type: "route", relationshipId: relationship.id, index: Number(handle.dataset.routeIndex), points, start: pointOnCanvas(event), diagramBefore: structuredClone(state.diagram), changed: false };
     }));
     element.querySelectorAll("[data-resize]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
@@ -383,6 +393,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       applyStyle("textStyle", allBold ? "normal" : "bold");
     }));
     element.querySelector("[data-relationship-command='delete']")?.addEventListener("click", deleteSelectedRelationship);
+    element.querySelector("[data-relationship-command='reroute']")?.addEventListener("click", () => mutate((next) => {
+      const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) delete relationship.waypoints;
+    }));
+    element.querySelectorAll("[data-relationship-text]").forEach((input) => input.addEventListener("change", () => mutate((next) => {
+      const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) relationship[input.dataset.relationshipText] = input.value.trim();
+    })));
     element.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(button.dataset.command)));
   }
 
@@ -596,6 +612,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!gesture) return;
     if (gesture.type === "pan") { element.scrollLeft = gesture.scrollLeft - (event.clientX - gesture.startX); element.scrollTop = gesture.scrollTop - (event.clientY - gesture.startY); return; }
     const point = pointOnCanvas(event);
+    if (gesture.type === "route") {
+      const next = structuredClone(state.diagram); const relationship = next.relationships.find((item) => item.id === gesture.relationshipId);
+      const points = [...gesture.points]; points[gesture.index] = { x: snap(point.x, 10), y: snap(point.y, 10) };
+      if (gesture.index > 0 && gesture.index < points.length - 1) relationship.waypoints = points.slice(1, -1);
+      gesture.changed = true; state.diagram = next; render(); return;
+    }
     if (gesture.type === "marquee") {
       gesture.rect = { left: Math.min(gesture.start.x, point.x), top: Math.min(gesture.start.y, point.y), right: Math.max(gesture.start.x, point.x), bottom: Math.max(gesture.start.y, point.y) };
       const hits = expandGroupedSelection(state.diagram.elements, nodesInRect(state.diagram.elements, gesture.rect));
@@ -626,7 +648,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       if (targetId && targetId !== connectDrag.sourceId) {
         const sourceId = connectDrag.sourceId;
         const kind = connectDrag.kind; const label = connectDrag.label;
-        mutate((next) => { const relationship = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, label, properties: {}, style: { ...defaultRelationshipStyle } }; next.relationships.push(relationship); state.selectedRelationshipId = relationship.id; state.selectedElementIds = []; });
+        const target = state.diagram.elements.find((item) => item.id === targetId); const targetAnchor = nearestAnchor(target, pointOnCanvas(event));
+        mutate((next) => { const relationship = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, sourceAnchor: connectDrag.sourceAnchor, targetAnchor, routing: "orthogonal", label, properties: {}, style: { ...defaultRelationshipStyle } }; next.relationships.push(relationship); state.selectedRelationshipId = relationship.id; state.selectedElementIds = []; });
         activeRelationshipKind = null; activeRelationshipLabel = null;
       }
       connectDrag = null; render(); return;
@@ -636,6 +659,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     // before the browser can open its picker.
     if (!gesture) return;
     const completedGesture = gesture;
+    if (completedGesture.type === "route" && (completedGesture.index === 0 || completedGesture.index === completedGesture.points.length - 1)) {
+      const targetId = event.target.closest?.("[data-node]")?.dataset.node;
+      if (targetId) {
+        const completed = structuredClone(state.diagram); const relationship = completed.relationships.find((item) => item.id === completedGesture.relationshipId); const target = completed.elements.find((item) => item.id === targetId);
+        if (completedGesture.index === 0) { relationship.source_id = targetId; relationship.sourceAnchor = nearestAnchor(target, pointOnCanvas(event)); }
+        else { relationship.target_id = targetId; relationship.targetAnchor = nearestAnchor(target, pointOnCanvas(event)); }
+        delete relationship.waypoints; state.diagram = completed;
+      }
+    }
     if (completedGesture.type === "marquee") selectionFrame = selectedIds().length > 1 ? { ...completedGesture.rect } : null;
     if (completedGesture.changed && completedGesture.diagramBefore) {
       const completed = structuredClone(state.diagram);
@@ -701,5 +733,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     pointerDrag = null; render();
   });
   bus.on("palette:dragend", () => { pointerDrag = null; element.classList.remove("drag-target-active"); render(); });
+  bus.on("model:focus", (modelId) => {
+    const node = state.diagram?.elements.find((item) => (item.model_element_id ?? item.id) === modelId);
+    if (!node) return;
+    setSelection([node.id]);
+    element.scrollTo({ left: Math.max(0, node.x * zoom - element.clientWidth / 2), top: Math.max(0, node.y * zoom - element.clientHeight / 2), behavior: "smooth" });
+  });
+  bus.on("relationship:focus", (relationshipId) => {
+    const relationship = state.diagram?.relationships.find((item) => (item.model_relationship_id ?? item.id) === relationshipId);
+    if (relationship) setSelection([], relationship.id);
+  });
   render();
 });

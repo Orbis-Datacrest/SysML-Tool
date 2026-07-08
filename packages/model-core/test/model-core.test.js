@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyPatch, commonElements, decomposeDiagram, diagramCatalog, diagramTypes, hydrateDiagram, isPaletteItemAllowed, migrateLegacyProject, validateDiagram, validateRelationshipCompatibility } from "../src/index.js";
+import { applyPatch, commonElements, decomposeDiagram, diagramCatalog, diagramTypes, hydrateDiagram, isPaletteItemAllowed, migrateLegacyProject, validateDiagram, validateModel, validateRelationshipCompatibility } from "../src/index.js";
 
 test("catalog contains every unique UML and SysML diagram type", () => {
   assert.equal(diagramCatalog.filter(({ family }) => family === "UML").length, 14);
@@ -98,4 +98,21 @@ test("relationship compatibility records semantic diagnostics", () => {
   const result = validateRelationshipCompatibility({ kind: "satisfy", source_id: "b", target_id: "b" }, [{ id: "b", kind: "block" }]);
   assert.equal(result.status, "invalid");
   assert.match(result.diagnostics[0], /requirement/);
+});
+
+test("semantic validation reports actionable repository diagnostics", () => {
+  const repository = { elements: [
+    { id: "r1", kind: "requirement", name: "First", semantic: { requirementId: "REQ-1" } },
+    { id: "r2", kind: "requirement", name: "Second", semantic: { requirementId: "REQ-1" } },
+    { id: "p1", kind: "port", name: "Input", semantic: { direction: "in", interfaceType: "I1", multiplicity: "2..1" } },
+    { id: "p2", kind: "port", name: "Output", semantic: { direction: "out", interfaceType: "I2" } },
+    { id: "t1", kind: "test-case", name: "Test", semantic: {} }
+  ], relationships: [
+    { id: "c1", kind: "connector", source_id: "p1", target_id: "p2", semantic: {} },
+    { id: "v1", kind: "verify", source_id: "p1", target_id: "r1", semantic: {} },
+    { id: "missing", kind: "trace", source_id: "r1", target_id: "gone", semantic: {} }
+  ] };
+  const result = validateModel(repository);
+  for (const code of ["duplicate-requirement-id", "invalid-multiplicity", "incompatible-ports", "invalid-connector-direction", "invalid-verify", "missing-reference"]) assert.equal(result.some((item) => item.code === code), true, code);
+  assert.equal(result.every((item) => item.severity && item.affectedElement?.id && item.message && item.suggestedFix), true);
 });
