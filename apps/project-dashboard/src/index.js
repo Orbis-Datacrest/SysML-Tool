@@ -46,15 +46,17 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
 
   function projectCard(project) {
     return `
-      <article class="project-card" data-project="${project.id}">
+      <article class="project-card" data-open-card="${project.id}" role="button" tabindex="0" aria-label="Open ${escapeHtml(project.name)}">
         <div>
           <h3>${escapeHtml(project.name)}</h3>
           <p class="muted">Modified: ${formatDate(project.updated_at)} · ${project.diagram_count ?? 0} diagram${project.diagram_count === 1 ? "" : "s"}</p>
         </div>
         <div class="project-card-actions">
-          <button data-open="${project.id}" class="primary">Open</button>
-          <button data-rename="${project.id}">Rename</button>
-          <button data-delete="${project.id}" class="danger">Delete</button>
+          <button data-delete="${project.id}" class="danger icon-button" title="Delete project" aria-label="Delete ${escapeHtml(project.name)}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash-fill" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 1a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1H3v9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4h.5a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H10a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1zm3 4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 .5-.5M8 5a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7A.5.5 0 0 1 8 5m3 .5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 1 0"/>
+            </svg>
+          </button>
         </div>
       </article>
     `;
@@ -96,18 +98,19 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
     element.querySelectorAll("[data-open]").forEach((button) => {
       button.addEventListener("click", () => bus.emit("project:open", button.dataset.open));
     });
-    element.querySelectorAll("[data-rename]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const project = projects.find((item) => item.id === button.dataset.rename);
-        const name = prompt("Rename project", project?.name ?? "");
-        if (!name || name === project?.name) return;
-        await api.request(`/api/projects/${button.dataset.rename}`, { method: "PATCH", body: JSON.stringify({ name }) });
-        bus.emit("toast", "Project renamed");
-        await load();
+    element.querySelectorAll("[data-open-card]").forEach((card) => {
+      const open = () => bus.emit("project:open", card.dataset.openCard);
+      card.addEventListener("click", (event) => { if (!event.target.closest("[data-delete]")) open(); });
+      card.addEventListener("keydown", (event) => {
+        if (event.target.closest("[data-delete]")) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        open();
       });
     });
     element.querySelectorAll("[data-delete]").forEach((button) => {
-      button.addEventListener("click", async () => {
+      button.addEventListener("click", async (event) => {
+        event.stopPropagation();
         const project = projects.find((item) => item.id === button.dataset.delete);
         if (!confirm(`Delete "${project?.name ?? "this project"}"? This also deletes its diagrams.`)) return;
         await api.request(`/api/projects/${button.dataset.delete}`, { method: "DELETE" });

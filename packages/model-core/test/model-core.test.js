@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyPatch, commonElements, diagramCatalog, diagramTypes, isPaletteItemAllowed, validateDiagram } from "../src/index.js";
+import { applyPatch, commonElements, decomposeDiagram, diagramCatalog, diagramTypes, hydrateDiagram, isPaletteItemAllowed, migrateLegacyProject, validateDiagram, validateRelationshipCompatibility } from "../src/index.js";
 
 test("catalog contains every unique UML and SysML diagram type", () => {
   assert.equal(diagramCatalog.filter(({ family }) => family === "UML").length, 14);
@@ -67,4 +67,35 @@ test("validates the interactive canvas relationship variants", () => {
     const result = validateDiagram({ tenant_id: "tenant", project_id: "project", type: "uml-class", elements, relationships: [{ id: kind, kind, source_id: "a", target_id: "b" }] });
     assert.equal(result.valid, true, `${kind} should be supported`);
   }
+});
+
+test("decomposes model semantics from diagram layout and hydrates a compatible canvas view", () => {
+  const diagram = { id: "d1", tenant_id: "t1", project_id: "p1", type: "sysml-bdd", metadata: { grid: 20 }, elements: [
+    { id: "b1", kind: "block", name: "Vehicle", x: 40, y: 60, width: 200, height: 140, style: { fillColor: "#fff" }, properties: { parts: ["engine: Engine"], operations: ["start()"] } }
+  ], relationships: [] };
+  const decomposed = decomposeDiagram(diagram);
+  assert.deepEqual(decomposed.elements[0].semantic.parts, ["engine: Engine"]);
+  assert.equal(decomposed.elements[0].x, undefined);
+  assert.equal(decomposed.view.element_refs[0].model_element_id, "b1");
+  assert.equal(decomposed.view.element_refs[0].x, 40);
+  const hydrated = hydrateDiagram(diagram, { elements: decomposed.elements, relationships: [] }, decomposed.view);
+  assert.equal(hydrated.elements[0].name, "Vehicle");
+  assert.equal(hydrated.elements[0].x, 40);
+});
+
+test("legacy project migration reuses one model element across diagram views", () => {
+  const shared = { id: "block_shared", kind: "block", name: "Controller", x: 10, y: 20, width: 100, height: 60, properties: { values: ["status: Boolean"] } };
+  const migrated = migrateLegacyProject({ diagrams: [
+    { id: "d1", tenant_id: "t", project_id: "p", elements: [shared], relationships: [] },
+    { id: "d2", tenant_id: "t", project_id: "p", elements: [{ ...shared, x: 400 }], relationships: [] }
+  ] });
+  assert.equal(migrated.model.elements.length, 1);
+  assert.equal(migrated.diagrams[0].view.element_refs[0].model_element_id, "block_shared");
+  assert.equal(migrated.diagrams[1].view.element_refs[0].x, 400);
+});
+
+test("relationship compatibility records semantic diagnostics", () => {
+  const result = validateRelationshipCompatibility({ kind: "satisfy", source_id: "b", target_id: "b" }, [{ id: "b", kind: "block" }]);
+  assert.equal(result.status, "invalid");
+  assert.match(result.diagnostics[0], /requirement/);
 });

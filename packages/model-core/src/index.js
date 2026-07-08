@@ -1,5 +1,7 @@
 import { diagramCatalog } from "./diagram-catalog.js";
 
+export * from "./model-repository.js";
+
 export { commonElements, diagramCatalog, isPaletteItemAllowed, paletteForDiagram } from "./diagram-catalog.js";
 
 export const diagramTypes = diagramCatalog.map((diagram) => diagram.value);

@@ -21,6 +21,7 @@ const state = {
   project: null,
   diagram: null,
   diagrams: [],
+  modelRepository: { schema_version: 2, elements: [], relationships: [] },
   selectedElementIds: [],
   selectedRelationshipId: null,
   relationshipKind: "association",
@@ -36,6 +37,15 @@ applyTheme(state.settings.theme);
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[character]);
 }
+
+const icons = {
+  moon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-moon-fill" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 .278a.77.77 0 0 1 .08.858 7.2 7.2 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277q.792-.001 1.533-.16a.79.79 0 0 1 .81.316.73.73 0 0 1-.031.893A8.35 8.35 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.75.75 0 0 1 6 .278"/></svg>`,
+  sun: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-brightness-high" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8M8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0m0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13m8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5M3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8m10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0m-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0m9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707M4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708"/></svg>`,
+  save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-floppy" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 2H9v3h2z"/><path d="M1.5 0h11.586a1.5 1.5 0 0 1 1.06.44l1.415 1.414A1.5 1.5 0 0 1 16 2.914V14.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 14.5v-13A1.5 1.5 0 0 1 1.5 0M1 1.5v13a.5.5 0 0 0 .5.5H2v-4.5A1.5 1.5 0 0 1 3.5 9h9a1.5 1.5 0 0 1 1.5 1.5V15h.5a.5.5 0 0 0 .5-.5V2.914a.5.5 0 0 0-.146-.353l-1.415-1.415A.5.5 0 0 0 13.086 1H13v4.5A1.5 1.5 0 0 1 11.5 7h-7A1.5 1.5 0 0 1 3 5.5V1H1.5a.5.5 0 0 0-.5.5m3 4a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5V1H4zM3 15h10v-4.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5z"/></svg>`,
+  history: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clock-history" viewBox="0 0 16 16" aria-hidden="true"><path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022zm2.004.45a7 7 0 0 0-.985-.299l.219-.976q.576.129 1.126.342zm1.37.71a7 7 0 0 0-.439-.27l.493-.87a8 8 0 0 1 .979.654l-.615.789a7 7 0 0 0-.418-.302zm1.834 1.79a7 7 0 0 0-.653-.796l.724-.69q.406.429.747.91zm.744 1.352a7 7 0 0 0-.214-.468l.893-.45a8 8 0 0 1 .45 1.088l-.95.313a7 7 0 0 0-.179-.483m.53 2.507a7 7 0 0 0-.1-1.025l.985-.17q.1.58.116 1.17zm-.131 1.538q.05-.254.081-.51l.993.123a8 8 0 0 1-.23 1.155l-.964-.267q.069-.247.12-.501m-.952 2.379q.276-.436.486-.908l.914.405q-.24.54-.555 1.038zm-.964 1.205q.183-.183.35-.378l.758.653a8 8 0 0 1-.401.432z"/><path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0z"/><path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5"/></svg>`,
+  share: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-unlock2-fill" viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 0c1.07 0 2.041.42 2.759 1.104l.14.14.062.08a.5.5 0 0 1-.71.675l-.076-.066-.216-.205A3 3 0 0 0 5 4v2h6.5A2.5 2.5 0 0 1 14 8.5v5a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 13.5v-5a2.5 2.5 0 0 1 2-2.45V4a4 4 0 0 1 4-4"/></svg>`,
+  ai: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-stars" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.73 1.73 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.73 1.73 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.73 1.73 0 0 0 3.407 2.31zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.16 1.16 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.16 1.16 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732z"/></svg>`
+};
 
 function rememberPage(view, projectId = state.project?.id) {
   localStorage.setItem("sysml.activeView", view);
@@ -104,7 +114,37 @@ function updateSaveStatus(status) {
 
 function syncSavedDiagram(saved) {
   state.diagram = saved;
-  state.diagrams = (state.diagrams ?? []).map((diagram) => diagram.id === saved.id ? saved : diagram);
+  const changedElements = new Map((saved.elements ?? []).map((item) => [item.model_element_id ?? item.id, item]));
+  const changedRelationships = new Map((saved.relationships ?? []).map((item) => [item.model_relationship_id ?? item.id, item]));
+  state.diagrams = (state.diagrams ?? []).map((diagram) => {
+    if (diagram.id === saved.id) return saved;
+    return {
+      ...diagram,
+      elements: (diagram.elements ?? []).map((item) => {
+        const model = changedElements.get(item.model_element_id ?? item.id);
+        return model ? { ...item, kind: model.kind, name: model.name, properties: structuredClone(model.properties), stereotypes: structuredClone(model.stereotypes ?? []) } : item;
+      }),
+      relationships: (diagram.relationships ?? []).map((item) => {
+        const model = changedRelationships.get(item.model_relationship_id ?? item.id);
+        return model ? { ...item, kind: model.kind, source_id: model.source_id, target_id: model.target_id, label: model.label, properties: structuredClone(model.properties), stereotypes: structuredClone(model.stereotypes ?? []), validation: model.validation } : item;
+      })
+    };
+  });
+  state.modelRepository.elements = [...new Map([...state.modelRepository.elements, ...(saved.elements ?? []).map((item) => ({ id: item.model_element_id ?? item.id, kind: item.kind, name: item.name, semantic: item.properties, stereotypes: item.stereotypes ?? [] }))].map((item) => [item.id, item])).values()];
+}
+
+async function loadModelRepository(projectId) {
+  state.modelRepository = projectId ? await api.request(`/api/projects/${projectId}/model`) : { schema_version: 2, elements: [], relationships: [] };
+}
+
+function repositoryFromDiagrams(diagrams) {
+  const elements = new Map();
+  const relationships = new Map();
+  for (const diagram of diagrams ?? []) {
+    for (const item of diagram.elements ?? []) elements.set(item.model_element_id ?? item.id, { id: item.model_element_id ?? item.id, kind: item.kind, name: item.name, semantic: item.properties ?? {}, stereotypes: item.stereotypes ?? [] });
+    for (const item of diagram.relationships ?? []) relationships.set(item.model_relationship_id ?? item.id, { id: item.model_relationship_id ?? item.id, kind: item.kind, source_id: item.source_id, target_id: item.target_id, label: item.label, semantic: item.properties ?? {}, stereotypes: item.stereotypes ?? [], validation: item.validation });
+  }
+  return { schema_version: 2, elements: [...elements.values()], relationships: [...relationships.values()] };
 }
 
 function scheduleAutoSave() {
@@ -196,15 +236,15 @@ function renderShell() {
       <div class="topbar-left">
         ${state.view === "editor" ? `<button id="sidebar-toggle" class="icon-button" title="${state.sidebarOpen ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarOpen ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-sidebar" aria-expanded="${state.sidebarOpen}">☰</button>` : ""}
         <button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span>SysML Studio</strong></button>
-        ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">💾</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
+        ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">${icons.save}</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
         ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
-        ${state.view === "editor" ? `<button id="ai-sidebar-toggle" class="icon-button" title="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-label="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-controls="ai-advisor-sidebar" aria-expanded="${state.mobilePanel === "advisor"}">✦</button>` : ""}
-        ${state.view === "editor" ? `<button id="history-toggle" class="icon-button" title="Version History" aria-label="Version History">🕘</button>` : ""}
-        <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? "🌙" : "☀️"}</button>
+        ${state.view === "editor" ? `<button id="ai-sidebar-toggle" class="icon-button" title="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-label="${state.mobilePanel === "advisor" ? "Close" : "Open"} AI advisor" aria-controls="ai-advisor-sidebar" aria-expanded="${state.mobilePanel === "advisor"}">${icons.ai}</button>` : ""}
+        ${state.view === "editor" ? `<button id="history-toggle" class="icon-button" title="Version History" aria-label="Version History">${icons.history}</button>` : ""}
+        <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
         ${state.view === "editor" ? `<div class="share-control">
-          <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing"><span class="share-lock" aria-hidden="true">🔒</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
+          <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing"><span class="share-lock" aria-hidden="true">${icons.share}</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
           <div id="share-popover" class="share-popover" hidden>
             <div class="share-popover-header"><div><strong>Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
             <form id="share-form">
@@ -425,6 +465,7 @@ async function loadWorkspace() {
   state.project = data.projects[0] ?? null;
   state.diagram = data.diagrams[0] ?? null;
   state.diagrams = data.diagrams ?? [];
+  await loadModelRepository(state.project?.id);
   updateWorkspaceTitle();
   bus.emit("bootstrap", data);
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
@@ -435,6 +476,7 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   state.project = data.project;
   state.diagrams = data.diagrams ?? [];
   state.diagram = state.diagrams[0] ?? null;
+  state.modelRepository = repositoryFromDiagrams(state.diagrams);
   state.selectedElementIds = [];
   state.selectedRelationshipId = null;
   state.history = [];
@@ -446,6 +488,11 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   updateWorkspaceTitle();
   bus.emit("bootstrap", { projects: [state.project], diagrams: state.diagrams });
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
+  try {
+    await loadModelRepository(projectId);
+  } catch (error) {
+    console.warn("Using the diagram-derived model repository because model loading failed", error);
+  }
 }
 
 async function boot() {
@@ -526,7 +573,7 @@ bus.on("auth:logout", async () => {
   renderShell();
 });
 
-bus.on("project:open", openProject);
+bus.on("project:open", (projectId) => openProject(projectId).catch((error) => bus.emit("toast", `Could not open project: ${error.message}`)));
 bus.on("dashboard:open", () => {
   if (state.view === "editor") showDashboard();
 });

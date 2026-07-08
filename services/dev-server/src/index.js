@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { applyPatch, createId, validateDiagram } from "../../../packages/model-core/src/index.js";
+import { applyPatch, createId, decomposeDiagram, hydrateDiagram, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const configuredDataDir = process.env.DATA_DIR ?? ".data";
@@ -201,6 +201,47 @@ function migrateSchema() {
       elements TEXT NOT NULL DEFAULT '[]',
       relationships TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE IF NOT EXISTS model_elements (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      owner_id TEXT,
+      package_id TEXT,
+      semantic TEXT NOT NULL DEFAULT '{}',
+      stereotypes TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS model_elements_project_idx ON model_elements(tenant_id, project_id);
+    CREATE TABLE IF NOT EXISTS model_relationships (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      semantic TEXT NOT NULL DEFAULT '{}',
+      stereotypes TEXT NOT NULL DEFAULT '[]',
+      validation TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS model_relationships_project_idx ON model_relationships(tenant_id, project_id);
+    CREATE TABLE IF NOT EXISTS diagram_views (
+      diagram_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      element_refs TEXT NOT NULL DEFAULT '[]',
+      relationship_refs TEXT NOT NULL DEFAULT '[]',
+      viewport TEXT NOT NULL DEFAULT '{}',
+      display TEXT NOT NULL DEFAULT '{}',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -275,7 +316,8 @@ function migrateSchema() {
 }
 
 function diagramFromRow(row) {
-  return row && {
+  if (!row) return null;
+  const legacy = {
     id: row.id,
     tenant_id: row.tenant_id,
     project_id: row.project_id,
@@ -288,6 +330,12 @@ function diagramFromRow(row) {
     elements: json(row.elements, []),
     relationships: json(row.relationships, [])
   };
+  const viewRow = db.prepare("SELECT * FROM diagram_views WHERE diagram_id = ? AND tenant_id = ?").get(row.id, row.tenant_id);
+  if (!viewRow) return legacy;
+  const elements = db.prepare("SELECT * FROM model_elements WHERE project_id = ? AND tenant_id = ?").all(row.project_id, row.tenant_id).map((item) => ({ ...item, semantic: json(item.semantic, {}), stereotypes: json(item.stereotypes, []) }));
+  const relationships = db.prepare("SELECT * FROM model_relationships WHERE project_id = ? AND tenant_id = ?").all(row.project_id, row.tenant_id).map((item) => ({ ...item, semantic: json(item.semantic, {}), stereotypes: json(item.stereotypes, []), validation: json(item.validation, {}) }));
+  const view = { schema_version: viewRow.schema_version, element_refs: json(viewRow.element_refs, []), relationship_refs: json(viewRow.relationship_refs, []), viewport: json(viewRow.viewport, {}), display: json(viewRow.display, {}), metadata: json(viewRow.metadata, {}) };
+  return hydrateDiagram(legacy, { elements, relationships }, view);
 }
 
 function insertTenant(tenant) {
@@ -413,9 +461,13 @@ function insertDiagram(diagram) {
     JSON.stringify(diagram.elements ?? []),
     JSON.stringify(diagram.relationships ?? [])
   );
+  persistDiagramModel(diagram);
 }
 
 function updateDiagram(diagram) {
+  const stored = db.prepare("SELECT elements, relationships FROM diagrams WHERE id = ?").get(diagram.id);
+  const previousElements = new Map(json(stored?.elements, []).map((item) => [item.id, item]));
+  const previousRelationships = new Map(json(stored?.relationships, []).map((item) => [item.id, item]));
   db.prepare(`
     UPDATE diagrams
     SET tenant_id = ?, project_id = ?, type = ?, name = ?, version = ?, updated_at = ?, metadata = ?, elements = ?, relationships = ?
@@ -432,6 +484,51 @@ function updateDiagram(diagram) {
     JSON.stringify(diagram.relationships ?? []),
     diagram.id
   );
+  persistDiagramModel(diagram, { previousElements, previousRelationships });
+}
+
+function persistDiagramModel(diagram, previous = {}) {
+  const { elements, relationships, view } = decomposeDiagram(diagram);
+  const timestamp = diagram.updated_at ?? now();
+  for (const element of elements) {
+    const prior = previous.previousElements?.get(element.id);
+    const incoming = (diagram.elements ?? []).find((item) => item.id === element.id);
+    if (prior && JSON.stringify({ kind: prior.kind, name: prior.name, properties: prior.properties, stereotypes: prior.stereotypes }) === JSON.stringify({ kind: incoming.kind, name: incoming.name, properties: incoming.properties, stereotypes: incoming.stereotypes })) continue;
+    const existing = db.prepare("SELECT tenant_id, project_id FROM model_elements WHERE id = ?").get(element.id);
+    if (existing && (existing.tenant_id !== element.tenant_id || existing.project_id !== element.project_id)) throw new Error(`Model element id collision: ${element.id}`);
+    db.prepare(`
+      INSERT INTO model_elements (id, tenant_id, project_id, kind, name, owner_id, package_id, semantic, stereotypes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, name=excluded.name, owner_id=excluded.owner_id,
+        package_id=excluded.package_id, semantic=excluded.semantic, stereotypes=excluded.stereotypes, updated_at=excluded.updated_at
+    `).run(element.id, element.tenant_id, element.project_id, element.kind, element.name, element.owner_id, element.package_id, JSON.stringify(element.semantic), JSON.stringify(element.stereotypes), diagram.created_at ?? timestamp, timestamp);
+  }
+  const projectElements = db.prepare("SELECT id, kind FROM model_elements WHERE tenant_id = ? AND project_id = ?").all(diagram.tenant_id, diagram.project_id);
+  for (const relationship of relationships) {
+    const prior = previous.previousRelationships?.get(relationship.id);
+    const incoming = (diagram.relationships ?? []).find((item) => item.id === relationship.id);
+    if (prior && JSON.stringify({ kind: prior.kind, source_id: prior.source_id, target_id: prior.target_id, label: prior.label, properties: prior.properties, stereotypes: prior.stereotypes }) === JSON.stringify({ kind: incoming.kind, source_id: incoming.source_id, target_id: incoming.target_id, label: incoming.label, properties: incoming.properties, stereotypes: incoming.stereotypes })) continue;
+    relationship.validation = validateRelationshipCompatibility(relationship, projectElements);
+    const existing = db.prepare("SELECT tenant_id, project_id FROM model_relationships WHERE id = ?").get(relationship.id);
+    if (existing && (existing.tenant_id !== relationship.tenant_id || existing.project_id !== relationship.project_id)) throw new Error(`Model relationship id collision: ${relationship.id}`);
+    db.prepare(`
+      INSERT INTO model_relationships (id, tenant_id, project_id, kind, source_id, target_id, label, semantic, stereotypes, validation, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, source_id=excluded.source_id, target_id=excluded.target_id,
+        label=excluded.label, semantic=excluded.semantic, stereotypes=excluded.stereotypes, validation=excluded.validation, updated_at=excluded.updated_at
+    `).run(relationship.id, relationship.tenant_id, relationship.project_id, relationship.kind, relationship.source_id, relationship.target_id, relationship.label, JSON.stringify(relationship.semantic), JSON.stringify(relationship.stereotypes), JSON.stringify(relationship.validation), diagram.created_at ?? timestamp, timestamp);
+  }
+  db.prepare(`
+    INSERT INTO diagram_views (diagram_id, tenant_id, project_id, schema_version, element_refs, relationship_refs, viewport, display, metadata, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(diagram_id) DO UPDATE SET schema_version=excluded.schema_version, element_refs=excluded.element_refs,
+      relationship_refs=excluded.relationship_refs, viewport=excluded.viewport, display=excluded.display, metadata=excluded.metadata, updated_at=excluded.updated_at
+  `).run(diagram.id, diagram.tenant_id, diagram.project_id, view.schema_version, JSON.stringify(view.element_refs), JSON.stringify(view.relationship_refs), JSON.stringify(view.viewport), JSON.stringify(view.display), JSON.stringify(view.metadata), timestamp);
+}
+
+function migrateLegacyDiagrams() {
+  const rows = db.prepare("SELECT d.* FROM diagrams d LEFT JOIN diagram_views v ON v.diagram_id = d.id WHERE v.diagram_id IS NULL").all();
+  for (const row of rows) persistDiagramModel({ ...diagramFromRow(row), elements: json(row.elements, []), relationships: json(row.relationships, []) });
 }
 
 function getUserByEmail(email) {
@@ -639,6 +736,10 @@ function starterDiagram(tenantId, projectId) {
   };
 }
 
+function blankDiagram(tenantId, projectId) {
+  return { ...starterDiagram(tenantId, projectId), elements: [], relationships: [] };
+}
+
 function ensureUserWorkspace(user) {
   const timestamp = now();
   const existingTenant = db.prepare("SELECT * FROM tenants WHERE id = ?").get(user.tenant_id);
@@ -655,7 +756,7 @@ function ensureUserWorkspace(user) {
   }
 
   const diagram = db.prepare("SELECT * FROM diagrams WHERE tenant_id = ? ORDER BY created_at LIMIT 1").get(user.tenant_id);
-  if (!diagram) insertDiagram(starterDiagram(user.tenant_id, project.id));
+  if (!diagram) insertDiagram(blankDiagram(user.tenant_id, project.id));
 }
 
 function createSession(user) {
@@ -931,7 +1032,7 @@ async function api(req, res, urlOrPath) {
     const timestamp = now();
     const project = { id: createId("project"), tenant_id: tenantId, name: input.name || "Untitled Project", description: input.description ?? "", created_at: timestamp, updated_at: timestamp };
     insertProject(project);
-    const diagram = starterDiagram(tenantId, project.id);
+    const diagram = blankDiagram(tenantId, project.id);
     insertDiagram({ ...diagram, name: "Block Definition Diagram", type: "sysml-bdd" });
     recordProjectOpen(tenantId, user?.id, project.id);
     return send(res, 201, projectWithStats({ ...project, diagram_count: 1, last_opened_at: now() }));
@@ -985,9 +1086,30 @@ async function api(req, res, urlOrPath) {
     if (!project) return send(res, 404, { error: "Project not found" });
     db.prepare("DELETE FROM events WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
     db.prepare("DELETE FROM diagrams WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM diagram_views WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM model_relationships WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
+    db.prepare("DELETE FROM model_elements WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
     db.prepare("DELETE FROM recent_projects WHERE project_id = ? AND tenant_id = ?").run(project.id, tenantId);
     db.prepare("DELETE FROM projects WHERE id = ? AND tenant_id = ?").run(project.id, tenantId);
     return send(res, 200, { ok: true });
+  }
+
+  const projectModelMatch = pathname.match(/^\/api\/projects\/([^/]+)\/model$/);
+  if (projectModelMatch && req.method === "GET") {
+    const project = db.prepare("SELECT id FROM projects WHERE id = ? AND tenant_id = ?").get(projectModelMatch[1], tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    const elements = db.prepare("SELECT * FROM model_elements WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map((item) => ({
+      ...item,
+      semantic: json(item.semantic, {}),
+      stereotypes: json(item.stereotypes, [])
+    }));
+    const relationships = db.prepare("SELECT * FROM model_relationships WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map((item) => ({
+      ...item,
+      semantic: json(item.semantic, {}),
+      stereotypes: json(item.stereotypes, []),
+      validation: json(item.validation, {})
+    }));
+    return send(res, 200, { schema_version: 2, elements, relationships });
   }
 
   const projectOpenMatch = pathname.match(/^\/api\/projects\/([^/]+)\/open$/);
@@ -996,7 +1118,7 @@ async function api(req, res, urlOrPath) {
     if (!project) return send(res, 404, { error: "Project not found" });
     let diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map(diagramFromRow);
     if (!diagrams.length) {
-      const diagram = starterDiagram(tenantId, project.id);
+      const diagram = blankDiagram(tenantId, project.id);
       insertDiagram({ ...diagram, name: "Block Definition Diagram", type: "sysml-bdd" });
       diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, tenantId).map(diagramFromRow);
     }
@@ -1018,6 +1140,9 @@ async function api(req, res, urlOrPath) {
     const row = db.prepare("SELECT * FROM project_snapshots WHERE project_id = ? AND tenant_id = ? AND version = ?").get(projectId, tenantId, version);
     if (!row) return send(res, 404, { error: "Version not found" });
     const snapshot = JSON.parse(row.snapshot);
+    db.prepare("DELETE FROM diagram_views WHERE project_id = ? AND tenant_id = ?").run(projectId, tenantId);
+    db.prepare("DELETE FROM model_relationships WHERE project_id = ? AND tenant_id = ?").run(projectId, tenantId);
+    db.prepare("DELETE FROM model_elements WHERE project_id = ? AND tenant_id = ?").run(projectId, tenantId);
     db.prepare("DELETE FROM diagrams WHERE project_id = ? AND tenant_id = ?").run(projectId, tenantId);
     for (const diagram of snapshot.diagrams ?? []) insertDiagram({ ...diagram, updated_at: now() });
     db.prepare("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ? AND tenant_id = ?").run(snapshot.project.name, snapshot.project.description ?? "", now(), projectId, tenantId);
@@ -1069,6 +1194,7 @@ async function api(req, res, urlOrPath) {
     if (!current) return send(res, 404, { error: "Diagram not found" });
     db.prepare("DELETE FROM events WHERE diagram_id = ? AND tenant_id = ?").run(current.id, tenantId);
     db.prepare("DELETE FROM diagrams WHERE id = ? AND tenant_id = ?").run(current.id, tenantId);
+    db.prepare("DELETE FROM diagram_views WHERE diagram_id = ? AND tenant_id = ?").run(current.id, tenantId);
     db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), current.project_id, tenantId);
     return send(res, 200, { ok: true });
   }
@@ -1084,7 +1210,7 @@ async function api(req, res, urlOrPath) {
     recordEvent(candidate, { summary: "Saved full diagram state", operations: [] }, user?.id ?? "local-user", "save");
     db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), candidate.project_id, tenantId);
     if (searchParams.get("snapshot") === "1") createProjectSnapshot(tenantId, candidate.project_id, "Manual Save", user?.id ?? null);
-    return send(res, 200, candidate);
+    return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(candidate.id, tenantId)));
   }
 
   if (pathname === "/api/ai/preview" && req.method === "POST") {
@@ -1107,7 +1233,7 @@ async function api(req, res, urlOrPath) {
     updateDiagram(next);
     recordEvent(next, input.patch, "ai-advisor", input.patch.summary);
     db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), next.project_id, tenantId);
-    return send(res, 200, next);
+    return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(next.id, tenantId)));
   }
 
   if (pathname === "/api/ai/keys" && req.method === "POST") {
@@ -1153,6 +1279,7 @@ async function serveStatic(req, res, pathname) {
 
 migrateSchema();
 await migrateJsonData();
+migrateLegacyDiagrams();
 
 http.createServer(async (req, res) => {
   try {
