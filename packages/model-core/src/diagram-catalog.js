@@ -1,27 +1,98 @@
-export const diagramCatalog = [
-  { family: "UML", category: "Structural", value: "uml-class", label: "Class Diagram", elements: ["class", "interface", "enumeration", "data-type", "primitive-type", "signal"] },
-  { family: "UML", category: "Structural", value: "uml-object", label: "Object Diagram", elements: ["object", "slot"] },
-  { family: "UML", category: "Structural", value: "uml-component", label: "Component Diagram", elements: ["component", "interface", "port", "artifact"] },
-  { family: "UML", category: "Structural", value: "uml-deployment", label: "Deployment Diagram", elements: ["node", "device", "execution-environment", "artifact"] },
-  { family: "UML", category: "Structural", value: "uml-package", label: "Package Diagram", elements: ["package", "model", "import"] },
-  { family: "UML", category: "Structural", value: "uml-composite-structure", label: "Composite Structure Diagram", elements: ["structured-classifier", "part", "port", "collaboration"] },
-  { family: "UML", category: "Structural", value: "uml-profile", label: "Profile Diagram", elements: ["profile", "stereotype", "metaclass"] },
-  { family: "UML", category: "Behavioral", value: "uml-use-case", label: "Use Case Diagram", elements: ["actor", "use-case", "system-boundary"] },
-  { family: "UML", category: "Behavioral", value: "uml-activity", label: "Activity Diagram", elements: ["activity", "action", "accept-event-action", "send-signal-action", "decision", "merge-node", "initial-node", "activity-final", "flow-final", "fork-node", "join-node", "object-node", "input-pin", "output-pin", "activity-partition"] },
-  { family: "UML", category: "Behavioral", value: "uml-state-machine", label: "State Machine Diagram", elements: ["state", "composite-state", "initial-state", "final-state", "choice", "junction", "entry-point", "exit-point", "history-state", "terminate"] },
-  { family: "UML", category: "Behavioral", value: "uml-sequence", label: "Sequence Diagram", elements: ["lifeline", "message", "activation", "combined-fragment", "interaction-use", "destruction-occurrence", "state-invariant", "continuation"] },
-  { family: "UML", category: "Behavioral", value: "uml-communication", label: "Communication Diagram", elements: ["object", "actor", "message"] },
-  { family: "UML", category: "Behavioral", value: "uml-interaction-overview", label: "Interaction Overview Diagram", elements: ["interaction", "interaction-use", "decision", "initial-node", "final-node"] },
-  { family: "UML", category: "Behavioral", value: "uml-timing", label: "Timing Diagram", elements: ["lifeline", "state-invariant", "time-constraint", "duration-constraint"] },
-  { family: "SysML", category: "Structural", value: "sysml-bdd", label: "Block Definition Diagram (BDD)", elements: ["block", "value-type", "interface-block", "constraint-block"] },
-  { family: "SysML", category: "Structural", value: "sysml-ibd", label: "Internal Block Diagram (IBD)", elements: ["part", "reference", "port", "flow-property", "connector"] },
-  { family: "SysML", category: "Structural", value: "sysml-package", label: "Package Diagram (PKG)", elements: ["package", "model", "view", "viewpoint"] },
-  { family: "SysML", category: "Structural", value: "sysml-parametric", label: "Parametric Diagram (PMR)", elements: ["constraint-property", "value-property", "parameter", "binding-connector"] },
-  { family: "SysML", category: "Behavioral", value: "sysml-use-case", label: "Use Case Diagram (UC)", elements: ["actor", "use-case", "system-boundary"] },
-  { family: "SysML", category: "Behavioral", value: "sysml-activity", label: "Activity Diagram (ACT)", elements: ["activity", "action", "accept-event-action", "send-signal-action", "object-node", "decision", "merge-node", "initial-node", "activity-final", "flow-final", "fork-node", "join-node", "activity-partition", "rate"] },
-  { family: "SysML", category: "Behavioral", value: "sysml-sequence", label: "Sequence Diagram (SD)", elements: ["lifeline", "message", "activation", "combined-fragment", "interaction-use", "destruction-occurrence"] },
-  { family: "SysML", category: "Behavioral", value: "sysml-state-machine", label: "State Machine Diagram (STM)", elements: ["state", "composite-state", "initial-state", "final-state", "choice", "junction", "entry-point", "exit-point", "history-state"] },
-  { family: "SysML", category: "Requirement", value: "sysml-requirement", label: "Requirement Diagram (REQ)", elements: ["requirement", "test-case", "rationale", "problem"] }
+const node = (kind, label, shape = kind) => ({ type: "node", kind, label, shape });
+const relationship = (kind, label, shape = kind) => ({ type: "relationship", kind, label, shape });
+
+export const commonElements = [
+  node("diagram-frame", "Diagram Frame", "frame"),
+  node("note", "Note / Comment", "note"),
+  relationship("note-connector", "Anchor Link", "dashed-line"),
+  node("constraint", "Constraint {expression}", "constraint"),
+  node("package", "Package", "package"),
+  relationship("dependency", "Dependency", "dependency")
 ];
 
-export const commonElements = ["note", "comment", "package"];
+const definitions = [
+  ["UML", "Structural", "uml-class", "Class Diagram", [
+    node("class", "Class"), node("interface", "Interface"), relationship("generalization", "Generalization"),
+    relationship("association", "Association"), relationship("aggregation", "Aggregation"), relationship("composition", "Composition")
+  ]],
+  ["UML", "Structural", "uml-object", "Object Diagram", [
+    node("instance-specification", "Instance Specification", "object"), node("slot", "Slot"), relationship("link", "Link")
+  ]],
+  ["UML", "Structural", "uml-component", "Component Diagram", [
+    node("component", "Component"), node("provided-interface", "Provided Interface"), node("required-interface", "Required Interface"), node("port", "Port")
+  ]],
+  ["UML", "Structural", "uml-deployment", "Deployment Diagram", [
+    node("node", "Node", "deployment-node"), node("artifact", "Artifact"), relationship("communication-path", "Communication Path")
+  ]],
+  ["UML", "Structural", "uml-package", "Package Diagram", [
+    node("import", "Package Import", "package-import"), relationship("package-merge", "Package Merge")
+  ]],
+  ["UML", "Structural", "uml-composite-structure", "Composite Structure Diagram", [
+    node("part", "Part"), relationship("connector", "Connector"), node("collaboration", "Collaboration")
+  ]],
+  ["UML", "Structural", "uml-profile", "Profile Diagram", [
+    node("stereotype", "Stereotype"), relationship("extension", "Extension")
+  ]],
+  ["UML", "Behavioral", "uml-use-case", "Use Case Diagram", [
+    node("actor", "Actor"), node("use-case", "Use Case"), relationship("include", "Include"), relationship("extend", "Extend"), node("system-boundary", "System Boundary")
+  ]],
+  ["UML", "Behavioral", "uml-activity", "Activity Diagram", [
+    node("action", "Action"), relationship("control-flow", "Control Flow"), relationship("object-flow", "Object Flow"), node("initial-node", "Initial Node"),
+    node("activity-final", "Final Node"), node("decision", "Decision / Merge"), node("fork-join", "Fork / Join"), node("activity-partition", "Swimlane")
+  ]],
+  ["UML", "Behavioral", "uml-sequence", "Sequence Diagram", [
+    node("lifeline", "Lifeline"), node("activation", "Activation Bar"), relationship("synchronous-message", "Synchronous Message"),
+    relationship("asynchronous-message", "Asynchronous Message"), relationship("return-message", "Return Message"), node("combined-fragment", "Combined Fragment (alt / loop / opt)")
+  ]],
+  ["UML", "Behavioral", "uml-state-machine", "State Machine Diagram", [
+    node("state", "State"), relationship("transition", "Transition"), node("choice", "Choice"), node("junction", "Junction"), node("history-state", "History"), node("region", "Region")
+  ]],
+  ["UML", "Behavioral", "uml-communication", "Communication Diagram", [
+    node("object", "Object"), relationship("numbered-message", "Numbered Message")
+  ]],
+  ["UML", "Behavioral", "uml-timing", "Timing Diagram", [
+    node("state-timeline", "State Timeline"), node("duration-constraint", "Duration Constraint")
+  ]],
+  ["UML", "Behavioral", "uml-interaction-overview", "Interaction Overview Diagram", [node("interaction-use", "Interaction Use")]],
+  ["SysML", "Structural", "sysml-bdd", "Block Definition Diagram (BDD)", [
+    node("block", "Block"), node("value-type", "Value Type"), node("constraint-block", "Constraint Block"), node("unit", "Unit"), node("quantity-kind", "Quantity Kind")
+  ]],
+  ["SysML", "Structural", "sysml-ibd", "Internal Block Diagram (IBD)", [
+    node("part-property", "Part Property"), node("reference-property", "Reference Property"), node("proxy-port", "Proxy Port"), node("full-port", "Full Port"), relationship("item-flow", "Item Flow")
+  ]],
+  ["SysML", "Structural", "sysml-package", "Package Diagram (PKG)", [node("view", "View"), node("viewpoint", "Viewpoint")]],
+  ["SysML", "Structural", "sysml-parametric", "Parametric Diagram (PMR)", [
+    node("constraint-property", "Constraint Property"), node("constraint-parameter", "Constraint Parameter"), relationship("binding-connector", "Binding Connector")
+  ]],
+  ["SysML", "Behavioral", "sysml-use-case", "Use Case Diagram (UC)", [
+    node("actor", "Actor"), node("use-case", "Use Case"), relationship("include", "Include"), relationship("extend", "Extend"), node("system-boundary", "System Boundary")
+  ]],
+  ["SysML", "Behavioral", "sysml-activity", "Activity Diagram (ACT)", [
+    node("action", "Action"), node("control-operator", "Control Operator"), node("object-node", "Object Node"), relationship("control-flow", "Control Flow"),
+    relationship("object-flow", "Object Flow"), node("initial-node", "Initial Node"), node("activity-final", "Final Node"), node("decision", "Decision / Merge"), node("fork-join", "Fork / Join")
+  ]],
+  ["SysML", "Behavioral", "sysml-sequence", "Sequence Diagram (SD)", [
+    node("part", "Block Part Lifeline", "lifeline"), node("activation", "Activation Bar"), relationship("synchronous-message", "Synchronous Message"),
+    relationship("asynchronous-message", "Asynchronous Message"), relationship("return-message", "Return Message"), node("combined-fragment", "Combined Fragment")
+  ]],
+  ["SysML", "Behavioral", "sysml-state-machine", "State Machine Diagram (STM)", [
+    node("state", "State"), relationship("transition", "Transition"), node("choice", "Choice"), node("junction", "Junction"), node("history-state", "History"), node("region", "Region")
+  ]],
+  ["SysML", "Requirement", "sysml-requirement", "Requirement Diagram (REQ)", [
+    node("requirement", "Requirement"), relationship("derive-reqt", "«deriveReqt»"), relationship("satisfy", "«satisfy»"),
+    relationship("verify", "«verify»"), relationship("refine", "«refine»"), relationship("trace", "«trace»")
+  ]]
+];
+
+export const diagramCatalog = definitions.map(([family, category, value, label, palette]) => ({
+  family, category, value, label, palette,
+  elements: palette.filter((item) => item.type === "node").map((item) => item.kind)
+}));
+
+export function paletteForDiagram(diagramType) {
+  return diagramCatalog.find(({ value }) => value === diagramType)?.palette ?? [];
+}
+
+export function isPaletteItemAllowed(diagramType, type, kind) {
+  return [...commonElements, ...paletteForDiagram(diagramType)].some((item) => item.type === type && item.kind === kind);
+}

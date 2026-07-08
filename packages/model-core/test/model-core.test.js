@@ -1,11 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyPatch, diagramCatalog, diagramTypes, validateDiagram } from "../src/index.js";
+import { applyPatch, commonElements, diagramCatalog, diagramTypes, isPaletteItemAllowed, validateDiagram } from "../src/index.js";
 
 test("catalog contains every unique UML and SysML diagram type", () => {
   assert.equal(diagramCatalog.filter(({ family }) => family === "UML").length, 14);
   assert.equal(diagramCatalog.filter(({ family }) => family === "SysML").length, 9);
   assert.equal(new Set(diagramTypes).size, 23);
+});
+
+test("palette keeps common tools global and diagram tools strictly scoped", () => {
+  assert.equal(commonElements.some(({ kind }) => kind === "package"), true);
+  assert.equal(isPaletteItemAllowed("uml-class", "node", "class"), true);
+  assert.equal(isPaletteItemAllowed("uml-class", "relationship", "composition"), true);
+  assert.equal(isPaletteItemAllowed("uml-class", "node", "actor"), false);
+  assert.equal(isPaletteItemAllowed("uml-use-case", "node", "actor"), true);
+  assert.equal(isPaletteItemAllowed("sysml-requirement", "relationship", "satisfy"), true);
+  assert.equal(isPaletteItemAllowed("sysml-requirement", "node", "class"), false);
 });
 
 test("validates tenant-scoped diagrams and relationships", () => {

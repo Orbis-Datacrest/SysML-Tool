@@ -1,6 +1,6 @@
 import { diagramCatalog } from "./diagram-catalog.js";
 
-export { commonElements, diagramCatalog } from "./diagram-catalog.js";
+export { commonElements, diagramCatalog, isPaletteItemAllowed, paletteForDiagram } from "./diagram-catalog.js";
 
 export const diagramTypes = diagramCatalog.map((diagram) => diagram.value);
 
@@ -31,6 +31,9 @@ export const elementKinds = [
   "activity-final", "flow-final", "fork-node", "join-node", "input-pin", "output-pin",
   "activity-partition", "composite-state", "junction", "entry-point", "exit-point", "terminate",
   "destruction-occurrence", "continuation", "rate"
+  , "diagram-frame", "constraint", "instance-specification", "provided-interface", "required-interface", "region",
+  "state-timeline", "unit", "quantity-kind", "part-property", "reference-property", "proxy-port", "full-port",
+  "constraint-parameter", "control-operator"
 ];
 
 export const relationshipKinds = [
@@ -53,6 +56,9 @@ export const relationshipKinds = [
   "flow",
   "connector",
   "sequence-message"
+  , "note-connector", "link", "communication-path", "package-merge", "extension", "control-flow", "object-flow",
+  "transition", "synchronous-message", "asynchronous-message", "return-message", "numbered-message", "item-flow",
+  "binding-connector", "derive-reqt"
 ];
 
 export function validateDiagram(diagram) {

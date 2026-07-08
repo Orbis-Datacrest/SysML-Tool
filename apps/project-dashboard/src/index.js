@@ -90,9 +90,7 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
     `;
 
     element.querySelector("#new-project")?.addEventListener("click", async () => {
-      const name = prompt("Project name", "Untitled Project");
-      if (!name) return;
-      const project = await api.request("/api/projects", { method: "POST", body: JSON.stringify({ name }) });
+      const project = await api.request("/api/projects", { method: "POST", body: JSON.stringify({ name: "Untitled Project" }) });
       bus.emit("project:open", project.id);
     });
     element.querySelectorAll("[data-open]").forEach((button) => {

@@ -1,5 +1,5 @@
-import { registerMfe } from "/packages/ui/src/moduleRegistry.js";
-import { elementKinds } from "/packages/model-core/src/index.js";
+import { registerMfe } from "../../../packages/ui/src/moduleRegistry.js";
+import { elementKinds, isPaletteItemAllowed } from "../../../packages/model-core/src/index.js";
 import {
   MIN_NODE_HEIGHT, MIN_NODE_WIDTH, applyElementStyle, clamp, expandGroupedSelection,
   groupElements, moveSelection, nodesInRect, removeElements, reorderElements,
@@ -13,6 +13,12 @@ const relationshipTypes = [
   ["bidirectional-association", "Bidirectional Association"], ["dependency", "Dependency"],
   ["generalization", "Generalization"], ["realization", "Realization"],
   ["composition", "Composition"], ["aggregation", "Aggregation"], ["containment", "Containment"]
+  , ["note-connector", "Anchor Link"], ["link", "Link"], ["communication-path", "Communication Path"],
+  ["package-merge", "Package Merge"], ["extension", "Extension"], ["control-flow", "Control Flow"],
+  ["object-flow", "Object Flow"], ["transition", "Transition"], ["synchronous-message", "Synchronous Message"],
+  ["asynchronous-message", "Asynchronous Message"], ["return-message", "Return Message"], ["numbered-message", "Numbered Message"],
+  ["include", "Include"], ["extend", "Extend"], ["item-flow", "Item Flow"], ["binding-connector", "Binding Connector"],
+  ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
 ];
 const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textStyle: "normal" };
 const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };
@@ -30,11 +36,16 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let relationshipToolbar = null;
   let selectionFrame = null;
   let paletteHover = null;
-  let editingNodeId = null;
+  let editingNode = null;
   let pointerDrag = null;
+  let lastNodePress = null;
   let clipboard = [];
   let pasteOffset = 0;
   let spaceHeld = false;
+  let activeRelationshipKind = null;
+  let activeRelationshipLabel = null;
+  const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
+  const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
 
   const selectedIds = () => state.selectedElementIds ?? [];
   const nodeStyle = (node) => ({ ...defaultNodeStyle, ...(node.style ?? {}) });
@@ -64,11 +75,33 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const circleKinds = new Set(["initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate"]);
   const packageKinds = new Set(["package", "model", "profile", "view", "viewpoint"]);
   const noteKinds = new Set(["note", "comment", "rationale", "problem"]);
+  const simpleShapeKinds = new Set([
+    "actor", "decision", "merge-node", "choice", "initial-node", "initial-state", "final-node", "final-state",
+    "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node",
+    "accept-event-action", "send-signal-action", "destruction-occurrence", "lifeline", ...packageKinds, ...noteKinds,
+    ...ellipseKinds, ...roundedKinds
+  ]);
+
+  const compartmentDefinitions = [
+    { key: "attributes", label: "Attributes" },
+    { key: "operations", label: "Operations" },
+    { key: "responsibilities", label: "Responsibilities" }
+  ];
+
+  function sectionEditor(node, section, value, label) {
+    return `<textarea class="node-inline-editor compartment-editor" data-node-editor="${node.id}" data-node-section="${section}" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</textarea>`;
+  }
+
+  function editableText(node, section, value, className, label) {
+    if (editingNode?.id === node.id && editingNode.section === section) return sectionEditor(node, section, value, label);
+    return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${escapeHtml(value)}</div>`;
+  }
 
   function renderNodeContent(node) {
-    if (editingNodeId === node.id) return `<textarea class="node-inline-editor" data-node-editor="${node.id}" aria-label="Edit ${escapeHtml(nodeLabel(node.kind))} text">${escapeHtml(node.name)}</textarea>`;
-    const attributes = node.properties?.attributes ?? [];
-    const operations = node.properties?.operations ?? [];
+    const editingSimpleNode = editingNode?.id === node.id && editingNode.section === "name";
+    if (editingSimpleNode && (node.kind === "actor" || diamondKinds.has(node.kind) || circleKinds.has(node.kind) || ["fork-join", "fork-node", "join-node", "accept-event-action", "send-signal-action", "destruction-occurrence", "lifeline"].includes(node.kind) || packageKinds.has(node.kind) || noteKinds.has(node.kind) || ellipseKinds.has(node.kind) || roundedKinds.has(node.kind))) {
+      return sectionEditor(node, "name", node.name, `${nodeLabel(node.kind)} text`);
+    }
     if (node.kind === "actor") return `<svg class="actor-figure" viewBox="0 0 100 126" aria-hidden="true"><circle cx="50" cy="20" r="17"></circle><path d="M50 37v50M18 51h64M50 87 19 123M50 87l31 36"></path></svg><div class="actor-name">${escapeHtml(node.name)}</div>`;
     if (diamondKinds.has(node.kind)) return `<div class="diamond-shape"></div><div class="shape-caption centered">${escapeHtml(node.name)}</div>`;
     if (circleKinds.has(node.kind)) return `<div class="circle-shape ${node.kind.startsWith("final") ? "final" : ""}"></div>${node.name ? `<div class="shape-caption below">${escapeHtml(node.name)}</div>` : ""}`;
@@ -81,8 +114,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (noteKinds.has(node.kind)) return `<div class="note-fold"></div><div class="note-content">${escapeHtml(node.name)}</div>`;
     if (ellipseKinds.has(node.kind)) return `<div class="ellipse-content">${escapeHtml(node.name)}</div>`;
     if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
-    return `<div class="node-title">${escapeHtml(node.name)}${node.locked ? `<span class="lock-indicator" title="Locked">●</span>` : ""}</div>
-      <div class="node-body"><div class="node-stereotype">${escapeHtml(nodeLabel(node.kind))}</div>${attributes.map((attribute) => `<div>+ ${escapeHtml(attribute)}</div>`).join("")}${operations.map((operation) => `<div>${escapeHtml(operation)}</div>`).join("")}</div>`;
+    const title = editableText(node, "name", node.name, "node-title-text", "Name");
+    return `<div class="node-title" data-edit-section="name">${title}${node.locked ? `<span class="lock-indicator" title="Locked">●</span>` : ""}<div class="node-stereotype">«${escapeHtml(nodeLabel(node.kind))}»</div></div>
+      <div class="node-compartments">${compartmentDefinitions.map(({ key, label }) => {
+        const values = node.properties?.[key] ?? [];
+        const text = Array.isArray(values) ? values.join("\n") : String(values ?? "");
+        if (editingNode?.id === node.id && editingNode.section === key) return `<section class="node-compartment editing">${sectionEditor(node, key, text, label)}</section>`;
+        return `<section class="node-compartment" data-edit-section="${key}" title="Double-click to edit ${label.toLowerCase()}"><span class="compartment-label">${label}</span><div class="compartment-content">${text ? escapeHtml(text).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${label.toLowerCase()}…</span>`}</div></section>`;
+      }).join("")}</div>`;
   }
 
   function defaultSizeFor(kind) {
@@ -97,7 +136,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (kind === "lifeline") return { width: 120, height: 240 };
     if (roundedKinds.has(kind)) return { width: 160, height: 90 };
     if (noteKinds.has(kind)) return { width: 150, height: 110 };
-    return { width: 180, height: 110 };
+    return { width: 190, height: 170 };
+  }
+
+  function fitNodeToContent(node) {
+    if (simpleShapeKinds.has(node.kind)) return;
+    const sections = compartmentDefinitions.map(({ key }) => {
+      const value = node.properties?.[key] ?? [];
+      return Array.isArray(value) ? value : String(value).split(/\r?\n/);
+    });
+    const lines = [node.name, ...sections.flat()].map((line) => String(line ?? ""));
+    const longestLine = Math.max(12, ...lines.map((line) => line.length));
+    node.width = clamp(Math.ceil(longestLine * 7.2 + 32), 190, 420);
+    node.height = clamp(50 + sections.reduce((height, section) => height + Math.max(34, section.length * 17 + 21), 0), 170, 620);
   }
 
   function relationshipPath(source, target) {
@@ -118,6 +169,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       composition: { start: "filled-diamond" },
       aggregation: { start: "hollow-diamond" },
       containment: { start: "containment" }
+      , "note-connector": { dashed: true }, link: {}, "communication-path": {}, "package-merge": { end: "open-arrow", dashed: true },
+      extension: { end: "hollow-triangle" }, "control-flow": { end: "open-arrow" }, "object-flow": { end: "open-arrow" },
+      transition: { end: "open-arrow" }, "synchronous-message": { end: "open-arrow" }, "asynchronous-message": { end: "open-arrow" },
+      "return-message": { end: "open-arrow", dashed: true }, "numbered-message": { end: "open-arrow" }, include: { end: "open-arrow", dashed: true },
+      extend: { end: "open-arrow", dashed: true }, "item-flow": { end: "open-arrow" }, "binding-connector": {},
+      "derive-reqt": { end: "open-arrow", dashed: true }, satisfy: { end: "open-arrow", dashed: true }, verify: { end: "open-arrow", dashed: true },
+      refine: { end: "open-arrow", dashed: true }, trace: { end: "open-arrow", dashed: true }
     };
     return decorations[type] ?? decorations.association;
   }
@@ -175,13 +233,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const selected = diagram.elements.filter((node) => selectedIds().includes(node.id));
     if (!selected.length) return "";
     const style = nodeStyle(selected[0]);
+    const allBold = selected.every((node) => nodeStyle(node).textStyle === "bold");
     const position = toolbarPosition(diagram);
     return `<div class="format-toolbar" style="left:${position.x}px;top:${position.y}px" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
-      ${selected.length > 1 ? `<span class="selection-count">${selected.length} selected</span>` : ""}
+      ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
       <label title="Border color">Border <input data-style="borderColor" type="color" value="${style.borderColor}"></label>
       <label title="Fill color">Fill <input data-style="fillColor" type="color" value="${style.fillColor}"></label>
       <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <button data-style-button="textStyle" class="format-button ${style.textStyle === "bold" ? "active" : ""}" title="Toggle bold text"><strong>B</strong></button>
+      <button data-style-button="textStyle" class="format-button ${allBold ? "active" : ""}" title="Toggle bold text for all selected elements"><strong>B</strong></button>
     </div>`;
   }
 
@@ -206,6 +265,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const completeSingleGroup = selectedGroups.size === 1 && selected.every((node) => node.groupId === [...selectedGroups][0]);
     return `<div class="canvas-context-menu" style="left:${contextMenu.x}px;top:${contextMenu.y}px" role="menu">
       <button data-command="delete" class="context-danger" role="menuitem">Delete <kbd>Del</kbd></button>
+      <span class="context-separator" role="separator"></span>
       <button data-command="cut" role="menuitem">Cut <kbd>Ctrl+X</kbd></button><button data-command="copy" role="menuitem">Copy <kbd>Ctrl+C</kbd></button><button data-command="duplicate" role="menuitem">Duplicate <kbd>Ctrl+D</kbd></button>
       <span class="context-separator"></span>
       ${selected.length > 1 && !completeSingleGroup ? `<button data-command="group" role="menuitem">Group <kbd>Ctrl+G</kbd></button>` : ""}
@@ -224,7 +284,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.innerHTML = `<div class="canvas-chrome"><div class="canvas-toolbar">
       <button id="history-undo" title="Undo last change" aria-label="Undo last change" ${state.history.length ? "" : "disabled"}>↶</button><button id="history-redo" title="Redo last change" aria-label="Redo last change" ${state.future.length ? "" : "disabled"}>↷</button>
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" class="zoom-level">${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
-      <button id="select-all" title="Select all elements" ${diagram.elements.length ? "" : "disabled"}>Select all</button><span class="toolbar-hint">Shift-click selects precisely · Drag a side handle to connect · Space-drag to pan</span>
+      <button id="select-all" title="Select all elements" ${diagram.elements.length ? "" : "disabled"}>Select all</button><span class="toolbar-hint">${activeRelationshipKind ? `${escapeHtml(activeRelationshipLabel)} armed · drag a node side handle to connect · Esc cancels` : "Shift-click selects precisely · Drag a side handle to connect · Space-drag to pan"}</span>
     </div>${paletteHover ? `<div class="palette-canvas-preview" style="left:${hostRect.left + 14}px;top:${previewTop}px" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
       ${pointerDrag ? `<div class="canvas-drag-ghost" style="left:${pointerDrag.clientX + 16}px;top:${pointerDrag.clientY + 16}px"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
     <div class="canvas-content" style="width:${CANVAS.width * zoom}px;height:${CANVAS.height * zoom}px">
@@ -259,8 +319,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function bindRenderedEvents() {
-    element.querySelector("#history-undo").addEventListener("click", (event) => { event.stopPropagation(); undoDiagram(); });
-    element.querySelector("#history-redo").addEventListener("click", (event) => { event.stopPropagation(); redoDiagram(); });
+    element.querySelector("#history-undo").addEventListener("click", (event) => { event.stopPropagation(); performUndo(); });
+    element.querySelector("#history-redo").addEventListener("click", (event) => { event.stopPropagation(); performRedo(); });
     element.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
     element.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
     element.querySelector("#zoom-reset").addEventListener("click", () => setZoom(1));
@@ -272,7 +332,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
       const source = state.diagram.elements.find((node) => node.id === handle.dataset.handle);
-      connectDrag = { sourceId: source.id, x1: source.x + source.width, y1: source.y + source.height / 2, x2: source.x + source.width + 80, y2: source.y + source.height / 2 };
+      connectDrag = { sourceId: source.id, kind: activeRelationshipKind ?? "directional-association", label: activeRelationshipLabel ?? "", x1: source.x + source.width, y1: source.y + source.height / 2, x2: source.x + source.width + 80, y2: source.y + source.height / 2 };
       gesture = null; contextMenu = null; relationshipToolbar = null; setSelection([source.id]);
     }));
     element.querySelectorAll("[data-resize]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
@@ -281,40 +341,59 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       gesture = { type: "resize", id: node.id, start: pointOnCanvas(event), original: structuredClone(node), diagramBefore: structuredClone(state.diagram), changed: false };
     }));
     element.querySelectorAll("[data-node]").forEach((nodeElement) => {
-      nodeElement.addEventListener("pointerdown", (event) => { if (!event.target.closest(".node-inline-editor")) startNodeGesture(event, nodeElement.dataset.node); });
-      nodeElement.addEventListener("dblclick", (event) => beginNodeEditing(event, nodeElement.dataset.node));
+      nodeElement.addEventListener("pointerdown", (event) => {
+        if (event.target.closest(".node-inline-editor")) return;
+        const pressedAt = performance.now();
+        const repeatedPress = event.button === 0 && lastNodePress?.nodeId === nodeElement.dataset.node && pressedAt - lastNodePress.at < 500;
+        lastNodePress = repeatedPress ? null : { nodeId: nodeElement.dataset.node, at: pressedAt };
+        if (event.button === 0 && (event.detail >= 2 || repeatedPress)) {
+          beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection);
+          return;
+        }
+        startNodeGesture(event, nodeElement.dataset.node);
+      });
+      nodeElement.addEventListener("dblclick", (event) => beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection));
       nodeElement.addEventListener("contextmenu", (event) => openContextMenu(event, nodeElement.dataset.node));
     });
     element.querySelectorAll("[data-node-editor]").forEach((input) => {
       input.addEventListener("pointerdown", (event) => event.stopPropagation());
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); input.blur(); }
-        if (event.key === "Escape") { event.preventDefault(); editingNodeId = null; render(); }
+        if (event.key === "Escape") { event.preventDefault(); editingNode = null; render(); }
       });
-      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.value), { once: true });
+      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.dataset.nodeSection, input.value), { once: true });
       requestAnimationFrame(() => { input.focus(); input.select(); });
     });
     element.querySelector("[data-selection-area]")?.addEventListener("pointerdown", startSelectionGesture);
     element.querySelectorAll("[data-style-button]").forEach((button) => button.addEventListener("click", () => {
-      const first = state.diagram.elements.find((node) => node.id === selectedIds()[0]);
-      applyStyle("textStyle", nodeStyle(first).textStyle === "bold" ? "normal" : "bold");
+      const selected = state.diagram.elements.filter((node) => selectedIds().includes(node.id));
+      const allBold = selected.length > 0 && selected.every((node) => nodeStyle(node).textStyle === "bold");
+      applyStyle("textStyle", allBold ? "normal" : "bold");
     }));
     element.querySelector("[data-relationship-command='delete']")?.addEventListener("click", deleteSelectedRelationship);
     element.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(button.dataset.command)));
   }
 
-  function beginNodeEditing(event, nodeId) {
+  function beginNodeEditing(event, nodeId, section = "name") {
     event.preventDefault(); event.stopPropagation();
-    editingNodeId = nodeId;
+    editingNode = { id: nodeId, section: section || "name" };
     gesture = null;
     render();
   }
 
-  function commitNodeEditing(nodeId, value) {
-    if (editingNodeId !== nodeId) return;
-    editingNodeId = null;
+  function commitNodeEditing(nodeId, section, value) {
+    if (editingNode?.id !== nodeId || editingNode.section !== section) return;
+    editingNode = null;
     const text = value.trim();
-    mutate((next) => { next.elements.find((node) => node.id === nodeId).name = text || nodeLabel(next.elements.find((node) => node.id === nodeId).kind); });
+    mutate((next) => {
+      const node = next.elements.find((item) => item.id === nodeId);
+      if (section === "name") node.name = text || nodeLabel(node.kind);
+      else {
+        node.properties ??= {};
+        node.properties[section] = text ? text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
+      }
+      fitNodeToContent(node);
+    });
   }
 
   function startSelectionGesture(event) {
@@ -455,6 +534,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const point = pointOnCanvas({ clientX, clientY });
     const size = defaultSizeFor(kind);
     const nodeId = id(kind);
+    editingNode = { id: nodeId, section: "name" };
     mutate((next) => next.elements.push({ id: nodeId, kind, name: nodeLabel(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: {} }));
     paletteHover = null;
     setSelection([nodeId]);
@@ -496,14 +576,29 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const targetId = event.target.closest?.("[data-node]")?.dataset.node;
       if (targetId && targetId !== connectDrag.sourceId) {
         const sourceId = connectDrag.sourceId;
-        mutate((next) => { const relationship = { id: id("rel"), kind: "directional-association", source_id: sourceId, target_id: targetId, label: "", properties: {}, style: { ...defaultRelationshipStyle } }; next.relationships.push(relationship); state.selectedRelationshipId = relationship.id; state.selectedElementIds = []; });
+        const kind = connectDrag.kind; const label = connectDrag.label;
+        mutate((next) => { const relationship = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, label, properties: {}, style: { ...defaultRelationshipStyle } }; next.relationships.push(relationship); state.selectedRelationshipId = relationship.id; state.selectedElementIds = []; });
+        activeRelationshipKind = null; activeRelationshipLabel = null;
       }
       connectDrag = null; render(); return;
     }
-    if (gesture?.type === "marquee") selectionFrame = selectedIds().length > 1 ? { ...gesture.rect } : null;
-    if (gesture?.changed && gesture.diagramBefore) { const completed = structuredClone(state.diagram); state.diagram = gesture.diagramBefore; setDiagram(completed); }
+    // Toolbar controls (especially native color inputs) must survive through the
+    // click event. Re-rendering on an unrelated pointerup detaches the input
+    // before the browser can open its picker.
+    if (!gesture) return;
+    const completedGesture = gesture;
+    if (completedGesture.type === "marquee") selectionFrame = selectedIds().length > 1 ? { ...completedGesture.rect } : null;
+    if (completedGesture.changed && completedGesture.diagramBefore) {
+      const completed = structuredClone(state.diagram);
+      state.diagram = completedGesture.diagramBefore;
+      gesture = null;
+      setDiagram(completed);
+      return;
+    }
     gesture = null;
-    render();
+    // A plain node click must keep its DOM target intact so the browser can
+    // recognize the second click and dispatch dblclick for inline editing.
+    if (completedGesture.type === "marquee") render();
   });
 
   window.addEventListener("keydown", (event) => {
@@ -511,19 +606,22 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const modifier = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
     if (event.code === "Space") { spaceHeld = true; if (!editing) event.preventDefault(); }
     if (modifier && key === "a") { event.preventDefault(); setSelection(state.diagram.elements.map((node) => node.id)); }
-    if (modifier && key === "z" && !event.shiftKey) { event.preventDefault(); undoDiagram(); }
-    if (modifier && (key === "y" || (key === "z" && event.shiftKey))) { event.preventDefault(); redoDiagram(); }
+    if (modifier && key === "z" && !event.shiftKey) { event.preventDefault(); performUndo(); }
+    if (modifier && (key === "y" || (key === "z" && event.shiftKey))) { event.preventDefault(); performRedo(); }
     if (modifier && key === "c") copySelection();
     if (modifier && key === "x") executeCommand("cut");
     if (modifier && key === "d") { event.preventDefault(); executeCommand("duplicate"); }
     if (modifier && key === "v") duplicateSelection();
     if (modifier && key === "g") { event.preventDefault(); executeCommand(event.shiftKey ? "ungroup" : "group"); }
     if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
-    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; render(); }
+    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; activeRelationshipKind = null; activeRelationshipLabel = null; render(); }
   });
   window.addEventListener("keyup", (event) => { if (event.code === "Space") spaceHeld = false; });
 
-  bus.on("diagram:changed", render);
+  bus.on("diagram:changed", () => {
+    if (activeRelationshipKind && !isPaletteItemAllowed(state.diagram?.type, "relationship", activeRelationshipKind)) { activeRelationshipKind = null; activeRelationshipLabel = null; }
+    render();
+  });
   bus.on("selection:changed", render);
   bus.on("palette:hover", (detail) => { paletteHover = detail; render(); });
   bus.on("palette:dragstart", () => { paletteHover = null; pointerDrag = null; render(); });
@@ -535,7 +633,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     pointerDrag = detail;
     render();
   });
-  bus.on("palette:pointerdrop", ({ kind, clientX, clientY }) => { placePaletteElement(kind, clientX, clientY); pointerDrag = null; render(); });
+  bus.on("palette:pointerdrop", ({ type, kind, label, clientX, clientY }) => {
+    const rect = element.getBoundingClientRect();
+    const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    if (inside && isPaletteItemAllowed(state.diagram?.type, type, kind)) {
+      if (type === "node") placePaletteElement(kind, clientX, clientY);
+      if (type === "relationship") { activeRelationshipKind = kind; activeRelationshipLabel = label; setSelection([]); }
+    }
+    pointerDrag = null; render();
+  });
   bus.on("palette:dragend", () => { pointerDrag = null; element.classList.remove("drag-target-active"); render(); });
   render();
 });

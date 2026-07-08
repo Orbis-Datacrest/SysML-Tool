@@ -31,6 +31,27 @@ const bus = createEventBus();
 let autoSaveTimer = null;
 applyTheme(state.settings.theme);
 
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[character]);
+}
+
+function rememberPage(view, projectId = state.project?.id) {
+  localStorage.setItem("sysml.activeView", view);
+  if (projectId) localStorage.setItem("sysml.activeProjectId", projectId);
+}
+
+function projectUrl(projectId) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("project", projectId);
+  return url;
+}
+
+function dashboardUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("project");
+  return url;
+}
+
 function applyTheme(theme) {
   const next = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
@@ -135,7 +156,19 @@ bus.on("history:redo", () => {
 
 function updateWorkspaceTitle() {
   const title = document.querySelector("#project-title");
-  if (title) title.textContent = state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "No workspace";
+  const name = title?.querySelector(".project-name-text");
+  if (name) name.textContent = state.project?.name ?? "Untitled Project";
+}
+
+function showDashboard({ updateHistory = true, replaceHistory = false } = {}) {
+  state.view = "dashboard";
+  state.historyOpen = false;
+  rememberPage("dashboard");
+  if (updateHistory) {
+    const method = replaceHistory ? "replaceState" : "pushState";
+    window.history[method]({ view: "dashboard" }, "", dashboardUrl());
+  }
+  renderShell();
 }
 
 function undoDiagram() {
@@ -161,11 +194,24 @@ function renderShell() {
       <div class="topbar-left">
         <button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span>SysML Studio</strong></button>
         ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">💾</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
-        <span id="project-title">${state.view === "editor" && state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "Project Dashboard"}</span>
+        ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
         ${state.view === "editor" ? `<button id="history-toggle" class="icon-button" title="Version History" aria-label="Version History">🕘</button>` : ""}
         <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? "🌙" : "☀️"}</button>
+        ${state.view === "editor" ? `<div class="share-control">
+          <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing"><span class="share-lock" aria-hidden="true">🔒</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
+          <div id="share-popover" class="share-popover" hidden>
+            <div class="share-popover-header"><div><strong>Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
+            <form id="share-form">
+              <label for="share-email">Invite by email</label>
+              <div class="share-invite-row"><input id="share-email" type="email" autocomplete="email" placeholder="name@example.com" required><select id="share-role" aria-label="Access level"><option value="Viewer">Viewer</option><option value="Commenter">Commenter</option><option value="Editor">Editor</option></select></div>
+              <p id="share-role-help" class="share-role-help">Can view the project but cannot make changes.</p>
+              <button class="primary share-send" type="submit">Send invite</button>
+            </form>
+            <button id="copy-project-link" class="copy-project-link" type="button">Copy project link</button>
+          </div>
+        </div>` : ""}
         <section id="import-export" class="topbar-export"></section>
         ${state.view === "dashboard" ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
@@ -236,9 +282,7 @@ function renderShell() {
   });
 
   document.querySelector("#brand-home")?.addEventListener("click", () => {
-    state.view = "dashboard";
-    state.historyOpen = false;
-    renderShell();
+    if (state.view === "editor") showDashboard();
   });
   document.querySelector("#history-toggle")?.addEventListener("click", async () => {
     await loadVersionHistory();
@@ -265,9 +309,77 @@ function renderShell() {
     }
     renderShell();
   });
+  const sharePopover = document.querySelector("#share-popover");
+  document.querySelector("#share-project")?.addEventListener("click", () => {
+    sharePopover.hidden = !sharePopover.hidden;
+    if (!sharePopover.hidden) document.querySelector("#share-email")?.focus();
+  });
+  document.querySelector("#close-share")?.addEventListener("click", () => { sharePopover.hidden = true; });
+  const shareRoleHelp = {
+    Viewer: "Can view the project but cannot make changes.",
+    Commenter: "Can view the project and leave comments.",
+    Editor: "Can edit diagrams and project content."
+  };
+  document.querySelector("#share-role")?.addEventListener("change", (event) => {
+    document.querySelector("#share-role-help").textContent = shareRoleHelp[event.target.value];
+  });
+  document.querySelector("#share-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = event.currentTarget.querySelector("button[type='submit']");
+    submit.disabled = true;
+    try {
+      await api.request(`/api/projects/${state.project.id}/shares`, {
+        method: "POST",
+        body: JSON.stringify({ email: document.querySelector("#share-email").value, role: document.querySelector("#share-role").value })
+      });
+      document.querySelector("#share-email").value = "";
+      sharePopover.hidden = true;
+      bus.emit("toast", "Project invitation sent");
+    } catch (error) {
+      bus.emit("toast", error.message);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  document.querySelector("#copy-project-link")?.addEventListener("click", async () => {
+    const url = projectUrl(state.project.id).toString();
+    try { await navigator.clipboard.writeText(url); bus.emit("toast", "Project link copied"); }
+    catch { prompt("Copy project link", url); }
+  });
   document.querySelector("#manual-save")?.addEventListener("click", async () => {
     await saveCurrentDiagram({ snapshot: true });
     bus.emit("toast", "Diagram milestone saved");
+  });
+  document.querySelector("#project-title.top-project-name")?.addEventListener("click", () => {
+    const button = document.querySelector("#project-title.top-project-name");
+    if (!button || !state.project) return;
+    const input = document.createElement("input");
+    input.className = "top-project-name-editor";
+    input.value = state.project.name;
+    input.setAttribute("aria-label", "Project name");
+    button.replaceWith(input);
+    let finished = false;
+    const finish = async (save) => {
+      if (finished) return;
+      finished = true;
+      const name = input.value.trim();
+      if (save && name && name !== state.project.name) {
+        try {
+          state.project = await api.request(`/api/projects/${state.project.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+          bus.emit("toast", "Project renamed");
+        } catch (error) {
+          bus.emit("toast", error.message);
+        }
+      }
+      renderShell();
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); finish(true); }
+      if (event.key === "Escape") { event.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+    input.focus();
+    input.select();
   });
   document.querySelectorAll("[data-restore-version]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -291,12 +403,12 @@ async function loadWorkspace() {
   state.project = data.projects[0] ?? null;
   state.diagram = data.diagrams[0] ?? null;
   state.diagrams = data.diagrams ?? [];
-  document.querySelector("#project-title").textContent = state.view === "editor" && state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : "Project Dashboard";
+  updateWorkspaceTitle();
   bus.emit("bootstrap", data);
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
 }
 
-async function openProject(projectId) {
+async function openProject(projectId, { updateHistory = true } = {}) {
   const data = await api.request(`/api/projects/${projectId}/open`, { method: "POST" });
   state.project = data.project;
   state.diagrams = data.diagrams ?? [];
@@ -306,14 +418,16 @@ async function openProject(projectId) {
   state.history = [];
   state.future = [];
   state.view = "editor";
+  rememberPage("editor", projectId);
+  if (updateHistory) window.history.pushState({ view: "editor", projectId }, "", projectUrl(projectId));
   renderShell();
-  document.querySelector("#project-title").textContent = state.project && state.diagram ? `${state.project.name} / ${state.diagram.name}` : state.project?.name ?? "Project";
+  updateWorkspaceTitle();
   bus.emit("bootstrap", { projects: [state.project], diagrams: state.diagrams });
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
 }
 
 async function boot() {
-  renderShell();
+  document.querySelector("#app").innerHTML = `<main class="app-boot" aria-label="Restoring workspace"><span class="boot-mark">S</span><span>Restoring workspace…</span></main>`;
   if (state.authToken) {
     const session = await api.request("/api/auth/me");
     state.user = session.user;
@@ -339,8 +453,22 @@ async function boot() {
     }
     bus.emit("auth:changed", state.user);
   }
+  const routeProjectId = new URL(window.location.href).searchParams.get("project");
+  const rememberedView = routeProjectId ? "editor" : localStorage.getItem("sysml.activeView");
+  const rememberedProjectId = routeProjectId ?? localStorage.getItem("sysml.activeProjectId");
+  if (rememberedView === "editor" && rememberedProjectId) {
+    try {
+      await openProject(rememberedProjectId, { updateHistory: false });
+      window.history.replaceState({ view: "editor", projectId: rememberedProjectId }, "", projectUrl(rememberedProjectId));
+      return;
+    } catch {
+      localStorage.removeItem("sysml.activeProjectId");
+    }
+  }
   state.view = "dashboard";
+  rememberPage("dashboard");
   renderShell();
+  window.history.replaceState({ view: "dashboard" }, "", dashboardUrl());
 }
 
 bus.on("auth:login", async ({ token, refreshToken, user }) => {
@@ -354,6 +482,7 @@ bus.on("auth:login", async ({ token, refreshToken, user }) => {
   state.settings = result.settings;
   applyTheme(state.settings.theme);
   state.view = "dashboard";
+  rememberPage("dashboard");
   bus.emit("auth:changed", user);
   renderShell();
 });
@@ -367,6 +496,7 @@ bus.on("auth:logout", async () => {
   localStorage.removeItem("sysml.authToken");
   localStorage.removeItem("sysml.refreshToken");
   state.view = "dashboard";
+  rememberPage("dashboard");
   state.project = null;
   state.diagram = null;
   state.diagrams = [];
@@ -376,8 +506,15 @@ bus.on("auth:logout", async () => {
 
 bus.on("project:open", openProject);
 bus.on("dashboard:open", () => {
-  state.view = "dashboard";
-  renderShell();
+  if (state.view === "editor") showDashboard();
+});
+
+window.addEventListener("popstate", async (event) => {
+  if (event.state?.view === "editor" && event.state.projectId) {
+    await openProject(event.state.projectId, { updateHistory: false });
+    return;
+  }
+  showDashboard({ updateHistory: false });
 });
 
 boot();

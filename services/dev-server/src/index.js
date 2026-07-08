@@ -165,6 +165,18 @@ function migrateSchema() {
       opened_at TEXT NOT NULL,
       UNIQUE(user_id, project_id)
     );
+    CREATE TABLE IF NOT EXISTS project_shares (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL,
+      invited_by TEXT,
+      accepted_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, email)
+    );
     CREATE TABLE IF NOT EXISTS project_snapshots (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
@@ -638,7 +650,7 @@ function ensureUserWorkspace(user) {
 
   let project = db.prepare("SELECT * FROM projects WHERE tenant_id = ? ORDER BY created_at LIMIT 1").get(user.tenant_id);
   if (!project) {
-    project = { id: createId("project"), tenant_id: user.tenant_id, name: "My SysML Project", description: "Private workspace saved to this verified email account", created_at: timestamp, updated_at: timestamp };
+    project = { id: createId("project"), tenant_id: user.tenant_id, name: "Untitled Project", description: "", created_at: timestamp, updated_at: timestamp };
     insertProject(project);
   }
 
@@ -898,7 +910,7 @@ async function api(req, res, urlOrPath) {
     if (!context) return;
     const input = await body(req);
     const email = normalizeEmail(input.email);
-    const role = ["Owner", "Admin", "Editor", "Viewer"].includes(input.role) ? input.role : "Viewer";
+    const role = ["Owner", "Admin", "Editor", "Commenter", "Viewer"].includes(input.role) ? input.role : "Viewer";
     if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
     const invitedUser = getUserByEmail(email);
     upsertTenantMember({ tenant_id: context.tenantId, user_id: invitedUser?.id, email, role, invited_by: context.user.id, accepted_at: invitedUser?.verified_at });
@@ -923,6 +935,39 @@ async function api(req, res, urlOrPath) {
     insertDiagram({ ...diagram, name: "Block Definition Diagram", type: "sysml-bdd" });
     recordProjectOpen(tenantId, user?.id, project.id);
     return send(res, 201, projectWithStats({ ...project, diagram_count: 1, last_opened_at: now() }));
+  }
+
+  const projectSharesMatch = pathname.match(/^\/api\/projects\/([^/]+)\/shares$/);
+  if (projectSharesMatch && req.method === "GET") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    const project = db.prepare("SELECT id FROM projects WHERE id = ? AND tenant_id = ?").get(projectSharesMatch[1], context.tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    const shares = db.prepare("SELECT email, role, accepted_at, created_at FROM project_shares WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, context.tenantId);
+    return send(res, 200, { shares });
+  }
+
+  if (projectSharesMatch && req.method === "POST") {
+    const context = requireUser(req, res);
+    if (!context) return;
+    const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectSharesMatch[1], context.tenantId);
+    if (!project) return send(res, 404, { error: "Project not found" });
+    const input = await body(req);
+    const email = normalizeEmail(input.email);
+    const role = ["Viewer", "Commenter", "Editor"].includes(input.role) ? input.role : "Viewer";
+    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
+    const invitedUser = getUserByEmail(email);
+    const timestamp = now();
+    db.prepare(`
+      INSERT INTO project_shares (id, tenant_id, project_id, email, role, invited_by, accepted_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, email) DO UPDATE SET role = excluded.role, accepted_at = COALESCE(excluded.accepted_at, project_shares.accepted_at), updated_at = excluded.updated_at
+    `).run(createId("share"), context.tenantId, project.id, email, role, context.user.id, invitedUser?.verified_at ?? null, timestamp, timestamp);
+    upsertTenantMember({ tenant_id: context.tenantId, user_id: invitedUser?.id, email, role, invited_by: context.user.id, accepted_at: invitedUser?.verified_at });
+    const tenant = db.prepare("SELECT * FROM tenants WHERE id = ?").get(context.tenantId);
+    await sendMemberInviteEmail(email, tenant, context.user, role);
+    const shares = db.prepare("SELECT email, role, accepted_at, created_at FROM project_shares WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(project.id, context.tenantId);
+    return send(res, 201, { shares });
   }
 
   const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);

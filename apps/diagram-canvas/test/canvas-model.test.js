@@ -51,7 +51,10 @@ test("groups expand selection and can be ungrouped from one member", () => {
 test("shared styling applies to every selected element", () => {
   const elements = [node("a", 0, 0), node("b", 100, 0), node("c", 200, 0)];
   applyElementStyle(elements, ["a", "b"], "borderWidth", 3, { borderWidth: 1 });
+  applyElementStyle(elements, ["a", "b"], "fillColor", "#336699", { fillColor: "#ffffff" });
   assert.equal(elements[0].style.borderWidth, 3);
   assert.equal(elements[1].style.borderWidth, 3);
+  assert.equal(elements[0].style.fillColor, "#336699");
+  assert.equal(elements[1].style.fillColor, "#336699");
   assert.equal(elements[2].style, undefined);
 });
