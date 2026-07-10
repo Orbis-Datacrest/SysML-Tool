@@ -7,6 +7,7 @@ export function clamp(value, minimum, maximum) {
 }
 
 export function snap(value, grid = GRID_SIZE) {
+  if (!grid || grid <= 1) return Math.round(value);
   return Math.round(value / grid) * grid;
 }
 
@@ -69,6 +70,90 @@ export function moveSelection(elements, selectedIds, originals, dx, dy, canvas, 
     node.x = original.x + safeDx;
     node.y = original.y + safeDy;
   }
+}
+
+export function alignElements(elements, selectedIds, alignment) {
+  const selected = elements.filter((node) => selectedIds.includes(node.id) && !node.locked);
+  if (selected.length < 2) return;
+  const bounds = selectionBounds(elements, selectedIds);
+  if (!bounds) return;
+  for (const node of selected) {
+    if (alignment === "left") node.x = bounds.left;
+    if (alignment === "center") node.x = bounds.left + (bounds.right - bounds.left - node.width) / 2;
+    if (alignment === "right") node.x = bounds.right - node.width;
+    if (alignment === "top") node.y = bounds.top;
+    if (alignment === "middle") node.y = bounds.top + (bounds.bottom - bounds.top - node.height) / 2;
+    if (alignment === "bottom") node.y = bounds.bottom - node.height;
+  }
+}
+
+export function distributeElements(elements, selectedIds, axis) {
+  const selected = elements.filter((node) => selectedIds.includes(node.id) && !node.locked);
+  if (selected.length < 3) return;
+  const ordered = [...selected].sort((a, b) => axis === "horizontal" ? a.x - b.x : a.y - b.y);
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const totalSize = ordered.reduce((sum, node) => sum + (axis === "horizontal" ? node.width : node.height), 0);
+  const start = axis === "horizontal" ? first.x : first.y;
+  const end = axis === "horizontal" ? last.x + last.width : last.y + last.height;
+  const gap = (end - start - totalSize) / (ordered.length - 1);
+  let cursor = start;
+  for (const node of ordered) {
+    if (axis === "horizontal") node.x = cursor;
+    else node.y = cursor;
+    cursor += (axis === "horizontal" ? node.width : node.height) + gap;
+  }
+}
+
+export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SIZE) {
+  const selected = elements.filter((node) => (selectedIds.length ? selectedIds.includes(node.id) : true) && !node.locked);
+  if (!selected.length) return;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(selected.length * 1.35)));
+  const maxWidth = Math.max(...selected.map((node) => node.width));
+  const maxHeight = Math.max(...selected.map((node) => node.height));
+  const left = Math.max(grid, Math.min(...selected.map((node) => node.x)));
+  const top = Math.max(grid, Math.min(...selected.map((node) => node.y)));
+  selected.forEach((node, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    node.x = clamp(snap(left + column * (maxWidth + grid * 3), grid), 0, canvas.width - node.width);
+    node.y = clamp(snap(top + row * (maxHeight + grid * 3), grid), 0, canvas.height - node.height);
+  });
+}
+
+export function snapLinesForMove(elements, selectedIds, movingBounds, tolerance = 6) {
+  const selected = new Set(selectedIds);
+  const guides = [];
+  const moving = {
+    left: movingBounds.left,
+    centerX: (movingBounds.left + movingBounds.right) / 2,
+    right: movingBounds.right,
+    top: movingBounds.top,
+    centerY: (movingBounds.top + movingBounds.bottom) / 2,
+    bottom: movingBounds.bottom
+  };
+  for (const node of elements) {
+    if (selected.has(node.id)) continue;
+    const fixed = {
+      left: node.x,
+      centerX: node.x + node.width / 2,
+      right: node.x + node.width,
+      top: node.y,
+      centerY: node.y + node.height / 2,
+      bottom: node.y + node.height
+    };
+    for (const key of ["left", "centerX", "right"]) {
+      for (const other of ["left", "centerX", "right"]) {
+        if (Math.abs(moving[key] - fixed[other]) <= tolerance) guides.push({ axis: "x", value: fixed[other] });
+      }
+    }
+    for (const key of ["top", "centerY", "bottom"]) {
+      for (const other of ["top", "centerY", "bottom"]) {
+        if (Math.abs(moving[key] - fixed[other]) <= tolerance) guides.push({ axis: "y", value: fixed[other] });
+      }
+    }
+  }
+  return guides.filter((guide, index, all) => all.findIndex((item) => item.axis === guide.axis && Math.round(item.value) === Math.round(guide.value)) === index);
 }
 
 export function removeElements(diagram, selectedIds) {

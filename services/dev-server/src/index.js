@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { applyPatch, createId, decomposeDiagram, hydrateDiagram, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
+import { applyPatch, assertBaselineMutable, compareProjectVersions, createBaseline, createId, decomposeDiagram, hydrateDiagram, restoreDiagram, restoreElement, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import { toVectorPdf } from "../../../apps/import-export/src/exporters.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -188,6 +188,94 @@ function migrateSchema() {
       created_by TEXT,
       created_at TEXT NOT NULL,
       UNIQUE(project_id, version)
+    );
+    CREATE TABLE IF NOT EXISTS project_baselines (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'draft',
+      released INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      released_by TEXT,
+      released_at TEXT,
+      UNIQUE(project_id, name)
+    );
+    CREATE TABLE IF NOT EXISTS project_reviews (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      baseline_id TEXT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS review_approvals (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      review_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      comment TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS collaboration_presence (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      diagram_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      cursor TEXT NOT NULL DEFAULT '{}',
+      selection TEXT NOT NULL DEFAULT '[]',
+      color TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, diagram_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS collaboration_comments (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      diagram_id TEXT NOT NULL,
+      anchor_type TEXT NOT NULL,
+      anchor_id TEXT NOT NULL,
+      parent_id TEXT,
+      body TEXT NOT NULL,
+      mentions TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      user_id TEXT,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      read_at TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS audit_records (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS diagrams (
       id TEXT PRIMARY KEY,
@@ -443,6 +531,112 @@ function snapshotsForProject(tenantId, projectId) {
     WHERE tenant_id = ? AND project_id = ?
     ORDER BY version DESC
   `).all(tenantId, projectId);
+}
+
+function snapshotPayload(tenantId, projectId, version) {
+  const row = db.prepare("SELECT * FROM project_snapshots WHERE project_id = ? AND tenant_id = ? AND version = ?").get(projectId, tenantId, Number(version));
+  return row ? { row, snapshot: JSON.parse(row.snapshot) } : null;
+}
+
+function roleForProject(user, tenantId, projectId) {
+  if (!user) return tenantId === "tenant_demo" ? "Owner" : "Viewer";
+  const share = db.prepare("SELECT role FROM project_shares WHERE tenant_id = ? AND project_id = ? AND email = ?").get(tenantId, projectId, user.email);
+  return share?.role ?? user.role ?? "Viewer";
+}
+
+function permissionsForRole(role) {
+  const map = {
+    Owner: ["read", "comment", "edit", "review", "approve", "admin"],
+    Admin: ["read", "comment", "edit", "review", "approve", "admin"],
+    Editor: ["read", "comment", "edit", "review"],
+    Reviewer: ["read", "comment", "review", "approve"],
+    Commenter: ["read", "comment", "review"],
+    Viewer: ["read"]
+  };
+  return map[role] ?? map.Viewer;
+}
+
+function requireProjectPermission(req, res, projectId, permission = "read") {
+  const context = authContext(req);
+  const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectId, context.tenantId);
+  if (!project) {
+    send(res, 404, { error: "Project not found" });
+    return null;
+  }
+  const role = roleForProject(context.user, context.tenantId, projectId);
+  const permissions = permissionsForRole(role);
+  if (!permissions.includes(permission)) {
+    send(res, 403, { error: "You do not have permission for this project action." });
+    return null;
+  }
+  return { ...context, project, role, permissions };
+}
+
+function recordAudit({ tenantId, projectId, actorId = null, action, resourceType, resourceId, description, metadata = {} }) {
+  db.prepare(`
+    INSERT INTO audit_records (id, tenant_id, project_id, actor_id, action, resource_type, resource_id, description, created_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(createId("audit"), tenantId, projectId, actorId, action, resourceType, resourceId, description, now(), JSON.stringify(metadata));
+}
+
+function publicBaseline(row) {
+  return row ? {
+    id: row.id,
+    project_id: row.project_id,
+    snapshot_id: row.snapshot_id,
+    version: row.version,
+    name: row.name,
+    description: row.description,
+    state: row.state,
+    released: Boolean(row.released),
+    created_by: row.created_by,
+    created_at: row.created_at,
+    released_by: row.released_by,
+    released_at: row.released_at
+  } : null;
+}
+
+function listBaselines(tenantId, projectId) {
+  return db.prepare("SELECT * FROM project_baselines WHERE tenant_id = ? AND project_id = ? ORDER BY created_at DESC").all(tenantId, projectId).map(publicBaseline);
+}
+
+function activePresence(tenantId, projectId, diagramId, currentUserId = "") {
+  const threshold = new Date(Date.now() - 45_000).toISOString();
+  return db.prepare(`
+    SELECT * FROM collaboration_presence
+    WHERE tenant_id = ? AND project_id = ? AND diagram_id = ? AND updated_at >= ? AND user_id != ?
+    ORDER BY updated_at DESC
+  `).all(tenantId, projectId, diagramId, threshold, currentUserId).map((item) => ({
+    id: item.user_id,
+    name: item.name,
+    role: item.role,
+    color: item.color,
+    cursor: json(item.cursor, null),
+    selection: json(item.selection, []),
+    updated_at: item.updated_at
+  }));
+}
+
+function commentsForDiagram(tenantId, projectId, diagramId) {
+  return db.prepare(`
+    SELECT c.*, COALESCE(u.email, c.created_by) AS author
+    FROM collaboration_comments c
+    LEFT JOIN users u ON u.id = c.created_by
+    WHERE c.tenant_id = ? AND c.project_id = ? AND c.diagram_id = ?
+    ORDER BY c.created_at ASC
+  `).all(tenantId, projectId, diagramId).map((item) => ({
+    id: item.id,
+    anchor_type: item.anchor_type,
+    anchor_id: item.anchor_id,
+    parent_id: item.parent_id,
+    body: item.body,
+    mentions: json(item.mentions, []),
+    status: item.status,
+    author: item.author,
+    created_by: item.created_by,
+    created_at: item.created_at,
+    updated_at: item.updated_at
+  }));
 }
 
 function insertDiagram(diagram) {
@@ -1131,13 +1325,97 @@ async function api(req, res, urlOrPath) {
   if (projectVersionsMatch && req.method === "GET") {
     const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectVersionsMatch[1], tenantId);
     if (!project) return send(res, 404, { error: "Project not found" });
-    return send(res, 200, { versions: snapshotsForProject(tenantId, project.id) });
+    return send(res, 200, { versions: snapshotsForProject(tenantId, project.id), baselines: listBaselines(tenantId, project.id) });
+  }
+
+  if (projectVersionsMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, projectVersionsMatch[1], "edit");
+    if (!context) return;
+    const input = await body(req);
+    const snapshot = createProjectSnapshot(context.tenantId, context.project.id, input.description || "Named Baseline", context.user?.id ?? null);
+    const baseline = createBaseline({
+      id: createId("baseline"),
+      name: input.name || `Baseline ${snapshot.version}`,
+      description: input.description ?? "",
+      version: snapshot.version,
+      state: input.release ? "released" : "draft",
+      created_by: context.user?.id ?? null
+    });
+    db.prepare(`
+      INSERT INTO project_baselines (id, tenant_id, project_id, snapshot_id, version, name, description, state, released, created_by, created_at, released_by, released_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(baseline.id, context.tenantId, context.project.id, snapshot.id, snapshot.version, baseline.name, baseline.description, baseline.state, baseline.released ? 1 : 0, baseline.created_by, baseline.created_at, baseline.released ? context.user?.id ?? null : null, baseline.released ? now() : null);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: baseline.released ? "baseline.release" : "baseline.create", resourceType: "baseline", resourceId: baseline.id, description: `${baseline.released ? "Released" : "Created"} baseline ${baseline.name}`, metadata: { version: snapshot.version } });
+    return send(res, 201, { baseline: publicBaseline(db.prepare("SELECT * FROM project_baselines WHERE id = ?").get(baseline.id)), versions: snapshotsForProject(context.tenantId, context.project.id), baselines: listBaselines(context.tenantId, context.project.id) });
+  }
+
+  const baselineReleaseMatch = pathname.match(/^\/api\/projects\/([^/]+)\/baselines\/([^/]+)\/release$/);
+  if (baselineReleaseMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, baselineReleaseMatch[1], "approve");
+    if (!context) return;
+    const baseline = db.prepare("SELECT * FROM project_baselines WHERE id = ? AND tenant_id = ? AND project_id = ?").get(baselineReleaseMatch[2], context.tenantId, context.project.id);
+    if (!baseline) return send(res, 404, { error: "Baseline not found" });
+    assertBaselineMutable(publicBaseline(baseline));
+    db.prepare("UPDATE project_baselines SET state = 'released', released = 1, released_by = ?, released_at = ? WHERE id = ?").run(context.user?.id ?? null, now(), baseline.id);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "baseline.release", resourceType: "baseline", resourceId: baseline.id, description: `Released baseline ${baseline.name}` });
+    return send(res, 200, { baseline: publicBaseline(db.prepare("SELECT * FROM project_baselines WHERE id = ?").get(baseline.id)) });
+  }
+
+  const projectCompareMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/compare$/);
+  if (projectCompareMatch && req.method === "GET") {
+    const context = requireProjectPermission(req, res, projectCompareMatch[1], "read");
+    if (!context) return;
+    const from = snapshotPayload(context.tenantId, context.project.id, searchParams.get("from"));
+    const to = snapshotPayload(context.tenantId, context.project.id, searchParams.get("to"));
+    if (!from || !to) return send(res, 404, { error: "Both versions are required for comparison" });
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "version.compare", resourceType: "project", resourceId: context.project.id, description: `Compared versions ${from.row.version} and ${to.row.version}` });
+    return send(res, 200, { from: from.row.version, to: to.row.version, diff: compareProjectVersions(from.snapshot, to.snapshot) });
+  }
+
+  const projectHistoryMatch = pathname.match(/^\/api\/projects\/([^/]+)\/history$/);
+  if (projectHistoryMatch && req.method === "GET") {
+    const context = requireProjectPermission(req, res, projectHistoryMatch[1], "read");
+    if (!context) return;
+    const events = db.prepare("SELECT * FROM events WHERE tenant_id = ? AND project_id = ? ORDER BY created_at DESC LIMIT 100").all(context.tenantId, context.project.id).map((item) => ({ ...item, patch: json(item.patch, {}) }));
+    const audit = db.prepare("SELECT * FROM audit_records WHERE tenant_id = ? AND project_id = ? ORDER BY created_at DESC LIMIT 100").all(context.tenantId, context.project.id).map((item) => ({ ...item, metadata: json(item.metadata, {}) }));
+    return send(res, 200, { model: events, audit });
+  }
+
+  const restoreElementMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/([^/]+)\/restore-element$/);
+  if (restoreElementMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, restoreElementMatch[1], "edit");
+    if (!context) return;
+    const input = await body(req);
+    const payload = snapshotPayload(context.tenantId, context.project.id, restoreElementMatch[2]);
+    if (!payload) return send(res, 404, { error: "Version not found" });
+    const current = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(input.diagram_id, context.tenantId));
+    const sourceDiagram = payload.snapshot.diagrams?.find((item) => item.id === input.diagram_id);
+    if (!current || !sourceDiagram) return send(res, 404, { error: "Diagram not found" });
+    const next = { ...restoreElement(current, sourceDiagram, input.element_id), updated_at: now(), version: current.version + 1 };
+    updateDiagram(next);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "version.restore_element", resourceType: "model-element", resourceId: input.element_id, description: `Restored element ${input.element_id} from version ${payload.row.version}` });
+    return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(next.id, context.tenantId)));
+  }
+
+  const restoreDiagramMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/([^/]+)\/restore-diagram$/);
+  if (restoreDiagramMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, restoreDiagramMatch[1], "edit");
+    if (!context) return;
+    const input = await body(req);
+    const payload = snapshotPayload(context.tenantId, context.project.id, restoreDiagramMatch[2]);
+    if (!payload) return send(res, 404, { error: "Version not found" });
+    const diagram = { ...restoreDiagram(payload.snapshot, input.diagram_id), tenant_id: context.tenantId, project_id: context.project.id, updated_at: now() };
+    updateDiagram(diagram);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "version.restore_diagram", resourceType: "diagram", resourceId: diagram.id, description: `Restored diagram ${diagram.name} from version ${payload.row.version}` });
+    return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagram.id, context.tenantId)));
   }
 
   const projectRestoreMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/([^/]+)\/restore$/);
   if (projectRestoreMatch && req.method === "POST") {
     const projectId = projectRestoreMatch[1];
     const version = Number(projectRestoreMatch[2]);
+    const context = requireProjectPermission(req, res, projectId, "edit");
+    if (!context) return;
     const row = db.prepare("SELECT * FROM project_snapshots WHERE project_id = ? AND tenant_id = ? AND version = ?").get(projectId, tenantId, version);
     if (!row) return send(res, 404, { error: "Version not found" });
     const snapshot = JSON.parse(row.snapshot);
@@ -1149,7 +1427,99 @@ async function api(req, res, urlOrPath) {
     db.prepare("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ? AND tenant_id = ?").run(snapshot.project.name, snapshot.project.description ?? "", now(), projectId, tenantId);
     const restoredProject = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectId, tenantId);
     const diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map(diagramFromRow);
+    recordAudit({ tenantId, projectId, actorId: context.user?.id, action: "version.restore_model", resourceType: "project", resourceId: projectId, description: `Restored model state from version ${version}` });
     return send(res, 200, { project: restoredProject, diagrams });
+  }
+
+  const projectReviewsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/reviews$/);
+  if (projectReviewsMatch && req.method === "GET") {
+    const context = requireProjectPermission(req, res, projectReviewsMatch[1], "read");
+    if (!context) return;
+    const reviews = db.prepare("SELECT * FROM project_reviews WHERE tenant_id = ? AND project_id = ? ORDER BY updated_at DESC").all(context.tenantId, context.project.id);
+    return send(res, 200, { reviews });
+  }
+
+  if (projectReviewsMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, projectReviewsMatch[1], "review");
+    if (!context) return;
+    const input = await body(req);
+    const review = { id: createId("review"), tenant_id: context.tenantId, project_id: context.project.id, baseline_id: input.baseline_id ?? null, title: input.title || "Engineering Review", description: input.description ?? "", status: "open", created_by: context.user?.id ?? "local-user", created_at: now(), updated_at: now() };
+    db.prepare(`
+      INSERT INTO project_reviews (id, tenant_id, project_id, baseline_id, title, description, status, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(review.id, review.tenant_id, review.project_id, review.baseline_id, review.title, review.description, review.status, review.created_by, review.created_at, review.updated_at);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "review.create", resourceType: "review", resourceId: review.id, description: `Opened review ${review.title}` });
+    return send(res, 201, { review });
+  }
+
+  const approvalMatch = pathname.match(/^\/api\/projects\/([^/]+)\/reviews\/([^/]+)\/approval$/);
+  if (approvalMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, approvalMatch[1], "approve");
+    if (!context) return;
+    const review = db.prepare("SELECT * FROM project_reviews WHERE tenant_id = ? AND project_id = ? AND id = ?").get(context.tenantId, context.project.id, approvalMatch[2]);
+    if (!review) return send(res, 404, { error: "Review not found" });
+    const input = await body(req);
+    const decision = ["approved", "changes-requested", "rejected"].includes(input.decision) ? input.decision : "approved";
+    db.prepare(`
+      INSERT INTO review_approvals (id, tenant_id, review_id, actor_id, decision, comment, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(createId("approval"), context.tenantId, review.id, context.user?.id ?? "local-user", decision, input.comment ?? "", now());
+    const status = decision === "approved" ? "approved" : "changes-requested";
+    db.prepare("UPDATE project_reviews SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), review.id);
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "review.approval", resourceType: "review", resourceId: review.id, description: `${decision} review ${review.title}` });
+    return send(res, 200, { review: db.prepare("SELECT * FROM project_reviews WHERE id = ?").get(review.id), approvals: db.prepare("SELECT * FROM review_approvals WHERE review_id = ? ORDER BY created_at DESC").all(review.id) });
+  }
+
+  const collaborationMatch = pathname.match(/^\/api\/projects\/([^/]+)\/collaboration$/);
+  if (collaborationMatch && req.method === "GET") {
+    const diagramId = searchParams.get("diagram_id");
+    const context = requireProjectPermission(req, res, collaborationMatch[1], "read");
+    if (!context) return;
+    if (!diagramId) return send(res, 422, { error: "diagram_id is required" });
+    return send(res, 200, {
+      role: context.role,
+      permissions: context.permissions,
+      presence: activePresence(context.tenantId, context.project.id, diagramId, context.user?.id ?? `guest_${context.tenantId}`),
+      comments: commentsForDiagram(context.tenantId, context.project.id, diagramId),
+      notifications: db.prepare("SELECT * FROM notifications WHERE tenant_id = ? AND project_id = ? AND (user_id IS NULL OR user_id = ?) ORDER BY created_at DESC LIMIT 20").all(context.tenantId, context.project.id, context.user?.id ?? "")
+    });
+  }
+
+  if (collaborationMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, collaborationMatch[1], "read");
+    if (!context) return;
+    const input = await body(req);
+    const diagramId = input.diagram_id;
+    if (!diagramId) return send(res, 422, { error: "diagram_id is required" });
+    const userId = context.user?.id ?? `guest_${context.tenantId}`;
+    const name = context.user?.email?.split("@")[0] ?? "Guest";
+    const color = `hsl(${Math.abs([...userId].reduce((sum, character) => sum + character.charCodeAt(0), 0)) % 360} 78% 58%)`;
+    db.prepare(`
+      INSERT INTO collaboration_presence (id, tenant_id, project_id, diagram_id, user_id, name, role, cursor, selection, color, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, diagram_id, user_id) DO UPDATE SET cursor = excluded.cursor, selection = excluded.selection, role = excluded.role, updated_at = excluded.updated_at
+    `).run(createId("presence"), context.tenantId, context.project.id, diagramId, userId, name, context.role, JSON.stringify(input.cursor ?? null), JSON.stringify(input.selection ?? []), color, now());
+    return send(res, 200, { ok: true, presence: activePresence(context.tenantId, context.project.id, diagramId, userId) });
+  }
+
+  const commentsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/comments$/);
+  if (commentsMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, commentsMatch[1], "comment");
+    if (!context) return;
+    const input = await body(req);
+    const mentions = [...String(input.body ?? "").matchAll(/@([\w.+-]+@[\w.-]+|\w+)/g)].map((match) => match[1]);
+    const comment = { id: createId("comment"), tenant_id: context.tenantId, project_id: context.project.id, diagram_id: input.diagram_id, anchor_type: input.anchor_type || "element", anchor_id: input.anchor_id || "", parent_id: input.parent_id ?? null, body: String(input.body ?? "").trim(), mentions, status: "open", created_by: context.user?.id ?? "local-user", created_at: now(), updated_at: now() };
+    if (!comment.diagram_id || !comment.anchor_id || !comment.body) return send(res, 422, { error: "diagram_id, anchor_id, and body are required" });
+    db.prepare(`
+      INSERT INTO collaboration_comments (id, tenant_id, project_id, diagram_id, anchor_type, anchor_id, parent_id, body, mentions, status, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(comment.id, comment.tenant_id, comment.project_id, comment.diagram_id, comment.anchor_type, comment.anchor_id, comment.parent_id, comment.body, JSON.stringify(comment.mentions), comment.status, comment.created_by, comment.created_at, comment.updated_at);
+    for (const mention of mentions) {
+      const target = getUserByEmail(mention.includes("@") ? mention : `${mention}@local.invalid`);
+      db.prepare("INSERT INTO notifications (id, tenant_id, project_id, user_id, type, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(createId("notification"), context.tenantId, context.project.id, target?.id ?? null, "mention", `${context.user?.email ?? "A collaborator"} mentioned @${mention}`, now());
+    }
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "comment.create", resourceType: "comment", resourceId: comment.id, description: `Commented on ${comment.anchor_type} ${comment.anchor_id}` });
+    return send(res, 201, { comments: commentsForDiagram(context.tenantId, context.project.id, comment.diagram_id) });
   }
 
   // const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);

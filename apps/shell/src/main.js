@@ -16,7 +16,13 @@ const state = {
   mobilePanel: null,
   sidebarOpen: window.matchMedia("(min-width: 768px)").matches,
   historyOpen: false,
+  settingsOpen: false,
   versionHistory: [],
+  baselines: [],
+  auditHistory: [],
+  reviews: [],
+  versionCompare: { from: "", to: "", diff: null },
+  collaboration: { role: "Owner", permissions: [], presence: [], comments: [], notifications: [], online: false },
   settings: { theme: localStorage.getItem("sysml.theme") ?? "dark" },
   project: null,
   diagram: null,
@@ -108,8 +114,90 @@ const api = {
   },
   saveDiagram(diagram, { snapshot = false } = {}) {
     return this.request(`/api/diagrams/${diagram.id}${snapshot ? "?snapshot=1" : ""}`, { method: "PUT", body: JSON.stringify(diagram) });
+  },
+  createBaseline(projectId, input) {
+    return this.request(`/api/projects/${projectId}/versions`, { method: "POST", body: JSON.stringify(input) });
+  },
+  compareVersions(projectId, from, to) {
+    return this.request(`/api/projects/${projectId}/versions/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  },
+  restoreElement(projectId, version, input) {
+    return this.request(`/api/projects/${projectId}/versions/${version}/restore-element`, { method: "POST", body: JSON.stringify(input) });
+  },
+  restoreDiagram(projectId, version, input) {
+    return this.request(`/api/projects/${projectId}/versions/${version}/restore-diagram`, { method: "POST", body: JSON.stringify(input) });
+  },
+  releaseBaseline(projectId, baselineId) {
+    return this.request(`/api/projects/${projectId}/baselines/${baselineId}/release`, { method: "POST" });
+  },
+  listReviews(projectId) {
+    return this.request(`/api/projects/${projectId}/reviews`);
+  },
+  createReview(projectId, input) {
+    return this.request(`/api/projects/${projectId}/reviews`, { method: "POST", body: JSON.stringify(input) });
+  },
+  approveReview(projectId, reviewId, input) {
+    return this.request(`/api/projects/${projectId}/reviews/${reviewId}/approval`, { method: "POST", body: JSON.stringify(input) });
+  },
+  collaborationState(projectId, diagramId) {
+    return this.request(`/api/projects/${projectId}/collaboration?diagram_id=${encodeURIComponent(diagramId)}`);
+  },
+  publishPresence(projectId, input) {
+    return this.request(`/api/projects/${projectId}/collaboration`, { method: "POST", body: JSON.stringify(input) });
+  },
+  createComment(projectId, input) {
+    return this.request(`/api/projects/${projectId}/comments`, { method: "POST", body: JSON.stringify(input) });
   }
 };
+
+function createSynchronizationService({ api, state, bus }) {
+  let timer = null;
+  let pendingPresence = null;
+  let inFlight = false;
+  const apply = (payload) => {
+    state.collaboration = { ...state.collaboration, ...payload, online: true };
+    bus.emit("collaboration:changed", state.collaboration);
+  };
+  const poll = async () => {
+    if (!state.project?.id || !state.diagram?.id || inFlight) return;
+    inFlight = true;
+    try {
+      if (pendingPresence) {
+        await api.publishPresence(state.project.id, pendingPresence);
+        pendingPresence = null;
+      }
+      apply(await api.collaborationState(state.project.id, state.diagram.id));
+    } catch (error) {
+      state.collaboration.online = false;
+      if (!String(error.message).includes("Failed to fetch")) bus.emit("toast", error.message);
+    } finally {
+      inFlight = false;
+    }
+  };
+  return {
+    start() {
+      clearInterval(timer);
+      timer = setInterval(poll, 3000);
+      poll();
+    },
+    stop() {
+      clearInterval(timer);
+      timer = null;
+    },
+    publishPresence(cursor = null, selection = state.selectedElementIds ?? []) {
+      if (!state.project?.id || !state.diagram?.id) return;
+      pendingPresence = { diagram_id: state.diagram.id, cursor, selection };
+    },
+    async addComment(input) {
+      const result = await api.createComment(state.project.id, input);
+      state.collaboration.comments = result.comments ?? [];
+      bus.emit("collaboration:changed", state.collaboration);
+    },
+    refresh: poll
+  };
+}
+
+const synchronization = createSynchronizationService({ api, state, bus });
 
 function setDiagram(diagram, recordHistory = true) {
   if (state.diagram && recordHistory) state.history.push(structuredClone(state.diagram));
@@ -191,6 +279,11 @@ async function loadVersionHistory() {
   if (!state.project?.id) return;
   const result = await api.request(`/api/projects/${state.project.id}/versions`);
   state.versionHistory = result.versions ?? [];
+  state.baselines = result.baselines ?? [];
+  const history = await api.request(`/api/projects/${state.project.id}/history`);
+  state.auditHistory = history.audit ?? [];
+  const reviews = await api.listReviews(state.project.id);
+  state.reviews = reviews.reviews ?? [];
 }
 
 bus.on("history:undo", () => {
@@ -220,6 +313,7 @@ function updateWorkspaceTitle() {
 function showDashboard({ updateHistory = true, replaceHistory = false } = {}) {
   state.view = "dashboard";
   state.historyOpen = false;
+  synchronization.stop();
   rememberPage("dashboard");
   if (updateHistory) {
     const method = replaceHistory ? "replaceState" : "pushState";
@@ -283,13 +377,16 @@ function renderShell() {
           <section id="element-palette"></section>
           <section id="properties-panel"></section>
           <section id="drawer-import-export" class="drawer-import-export"></section>
-          <section id="auth-tenant-settings"></section>
           <section id="left-account" class="left-account"></section>
         </aside>
         <section id="diagram-canvas" class="canvas-host"></section>
         <aside id="ai-advisor-sidebar" class="right-rail ${state.mobilePanel === "advisor" ? "drawer-open" : ""}" aria-label="AI advisor">
           <div class="mobile-drawer-header mobile-only"><strong>AI advisor</strong><button class="close-mobile-panel" aria-label="Close AI advisor">×</button></div>
           <section id="ai-advisor"></section>
+          <div class="ai-settings-actions">
+            <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="${state.settingsOpen}" aria-controls="auth-tenant-settings">${state.settingsOpen ? "Close Settings" : "Settings"}</button>
+          </div>
+          ${state.settingsOpen ? `<section id="auth-tenant-settings" class="ai-settings-slot"></section>` : ""}
         </aside>
         <button class="workspace-drawer-backdrop ${state.mobilePanel === "advisor" ? "advisor-backdrop" : ""} ${state.sidebarOpen ? "sidebar-backdrop" : ""}" aria-label="Close open panel"></button>
       </main>
@@ -309,14 +406,66 @@ function renderShell() {
             <button id="close-history" title="Close history" aria-label="Close history">×</button>
           </div>
           <div class="history-body">
+            <form id="baseline-form" class="history-form">
+              <input id="baseline-name" placeholder="Baseline name" aria-label="Baseline name" required>
+              <input id="baseline-description" placeholder="Change description" aria-label="Change description">
+              <label class="checkbox-row"><input id="baseline-release" type="checkbox"> Release immutable baseline</label>
+              <button class="primary" type="submit">Create Baseline</button>
+            </form>
+            <div class="history-section">
+              <strong>Named Baselines</strong>
+              ${state.baselines.map((item) => `
+                <div class="version-card baseline-card">
+                  <strong>${escapeHtml(item.name)} ${item.released ? `<span class="baseline-state">Released</span>` : `<span class="baseline-state draft">Draft</span>`}</strong>
+                  <span class="muted">Version ${item.version} · ${new Date(item.created_at).toLocaleString()}</span>
+                  <span>${escapeHtml(item.description)}</span>
+                  ${item.released ? "" : `<button data-release-baseline="${item.id}">Release</button>`}
+                </div>
+              `).join("") || `<p class="muted">No named baselines yet.</p>`}
+            </div>
+            <form id="compare-form" class="history-form compact">
+              <select id="compare-from" aria-label="Compare from">${state.versionHistory.map((item) => `<option value="${item.version}" ${String(state.versionCompare.from) === String(item.version) ? "selected" : ""}>v${item.version}</option>`).join("")}</select>
+              <select id="compare-to" aria-label="Compare to">${state.versionHistory.map((item) => `<option value="${item.version}" ${String(state.versionCompare.to || state.versionHistory[0]?.version) === String(item.version) ? "selected" : ""}>v${item.version}</option>`).join("")}</select>
+              <button type="submit">Compare</button>
+            </form>
+            ${state.versionCompare.diff ? `<div class="diff-panel">
+              ${["modelChanges", "diagramChanges", "relationshipChanges", "requirementChanges"].map((key) => `
+                <section><strong>${key.replace(/([A-Z])/g, " $1")}</strong>
+                  ${(state.versionCompare.diff[key] ?? []).slice(0, 8).map((item) => `<div class="diff-row ${item.kind}"><span>${escapeHtml(item.label ?? item.id)}</span><small>${escapeHtml(item.path || item.kind)}: ${escapeHtml(String(item.before ?? "∅"))} → ${escapeHtml(String(item.after ?? "∅"))}</small></div>`).join("") || `<p class="muted">No changes.</p>`}
+                </section>
+              `).join("")}
+            </div>` : ""}
+            <div class="history-section">
+              <strong>Reviews & Approvals</strong>
+              <form id="review-form" class="history-form compact"><input id="review-title" placeholder="Review title" aria-label="Review title"><button type="submit">Open Review</button></form>
+              ${state.reviews.map((item) => `<div class="version-card">
+                <strong>${escapeHtml(item.title)}</strong><span class="muted">${escapeHtml(item.status)} · ${new Date(item.created_at).toLocaleString()}</span>
+                <button data-approve-review="${item.id}" ${item.status === "approved" ? "disabled" : ""}>Approve</button>
+                <button data-request-changes="${item.id}" ${item.status === "approved" ? "disabled" : ""}>Request changes</button>
+              </div>`).join("") || `<p class="muted">No active reviews.</p>`}
+            </div>
+            <div class="history-section">
+              <strong>Collaboration</strong>
+              <div class="collab-summary"><span>${escapeHtml(state.collaboration.role)}</span><span>${state.collaboration.presence.length} online</span><span>${state.collaboration.comments.length} comments</span></div>
+              ${state.collaboration.comments.slice(-5).reverse().map((item) => `<div class="comment-card"><strong>${escapeHtml(item.author)}</strong><span>${escapeHtml(item.body)}</span><small>${escapeHtml(item.anchor_type)} ${escapeHtml(item.anchor_id)}</small></div>`).join("") || `<p class="muted">No anchored discussions yet.</p>`}
+            </div>
+            <div class="history-section">
+              <strong>Model History</strong>
             ${state.versionHistory.map((item) => `
               <div class="version-card">
                 <strong>Version ${item.version}</strong>
                 <span class="muted">${new Date(item.created_at).toLocaleString()}</span>
                 <span>${item.description}</span>
+                ${state.diagram ? `<button data-restore-diagram-version="${item.version}">Restore diagram</button>` : ""}
+                ${state.selectedElementIds?.[0] && state.diagram ? `<button data-restore-element-version="${item.version}">Restore selected element</button>` : ""}
                 <button data-restore-version="${item.version}">Restore</button>
               </div>
             `).join("") || `<p class="muted">No manual save milestones yet. Click the save icon to create one.</p>`}
+            </div>
+            <div class="history-section">
+              <strong>Audit History</strong>
+              ${state.auditHistory.slice(0, 12).map((item) => `<div class="audit-row"><span>${escapeHtml(item.description)}</span><small>${new Date(item.created_at).toLocaleString()}</small></div>`).join("") || `<p class="muted">No audited actions yet.</p>`}
+            </div>
           </div>
         </aside>
       </div>
@@ -333,7 +482,7 @@ function renderShell() {
     mountMfe("ai-advisor", document.querySelector("#ai-advisor"), context);
     mountMfe("import-export", document.querySelector("#topbar-import-export"), context);
     mountMfe("import-export", document.querySelector("#drawer-import-export"), context);
-    mountMfe("auth-tenant-settings", document.querySelector("#auth-tenant-settings"), context);
+    if (state.settingsOpen) mountMfe("auth-tenant-settings", document.querySelector("#auth-tenant-settings"), context);
     mountMfe("auth-session", document.querySelector("#left-account"), context);
   }
 
@@ -356,6 +505,10 @@ function renderShell() {
     renderShell();
   });
   document.querySelector("#ai-sidebar-toggle")?.addEventListener("click", () => setMobilePanel("advisor"));
+  document.querySelector("#settings-toggle")?.addEventListener("click", () => {
+    state.settingsOpen = !state.settingsOpen;
+    renderShell();
+  });
   document.querySelectorAll(".close-mobile-panel,.workspace-drawer-backdrop").forEach((button) => button.addEventListener("click", () => {
     state.mobilePanel = null;
     state.sidebarOpen = false;
@@ -434,6 +587,90 @@ function renderShell() {
     await saveCurrentDiagram({ snapshot: true });
     bus.emit("toast", "Diagram milestone saved");
   });
+  document.querySelector("#baseline-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = document.querySelector("#baseline-name").value.trim();
+    const description = document.querySelector("#baseline-description").value.trim();
+    const release = document.querySelector("#baseline-release").checked;
+    try {
+      const result = await api.createBaseline(state.project.id, { name, description, release });
+      state.versionHistory = result.versions ?? [];
+      state.baselines = result.baselines ?? [];
+      renderShell();
+      bus.emit("toast", release ? "Released baseline created" : "Baseline created");
+    } catch (error) {
+      bus.emit("toast", error.message);
+    }
+  });
+  document.querySelector("#compare-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const from = document.querySelector("#compare-from").value;
+    const to = document.querySelector("#compare-to").value;
+    try {
+      const result = await api.compareVersions(state.project.id, from, to);
+      state.versionCompare = { from, to, diff: result.diff };
+      renderShell();
+    } catch (error) {
+      bus.emit("toast", error.message);
+    }
+  });
+  document.querySelector("#review-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const title = document.querySelector("#review-title").value.trim() || "Engineering Review";
+    try {
+      await api.createReview(state.project.id, { title, baseline_id: state.baselines[0]?.id });
+      await loadVersionHistory();
+      renderShell();
+      bus.emit("toast", "Review opened");
+    } catch (error) {
+      bus.emit("toast", error.message);
+    }
+  });
+  document.querySelectorAll("[data-release-baseline]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await api.releaseBaseline(state.project.id, button.dataset.releaseBaseline);
+      await loadVersionHistory();
+      renderShell();
+      bus.emit("toast", "Baseline released");
+    } catch (error) {
+      bus.emit("toast", error.message);
+    }
+  }));
+  document.querySelectorAll("[data-approve-review],[data-request-changes]").forEach((button) => button.addEventListener("click", async () => {
+    const reviewId = button.dataset.approveReview ?? button.dataset.requestChanges;
+    const decision = button.dataset.approveReview ? "approved" : "changes-requested";
+    try {
+      await api.approveReview(state.project.id, reviewId, { decision });
+      await loadVersionHistory();
+      renderShell();
+      bus.emit("toast", decision === "approved" ? "Review approved" : "Changes requested");
+    } catch (error) {
+      bus.emit("toast", error.message);
+    }
+  }));
+  document.querySelectorAll("[data-restore-element-version]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const elementId = state.selectedElementIds?.[0];
+      if (!elementId) return;
+      if (!confirm(`Restore selected element from project version ${button.dataset.restoreElementVersion}?`)) return;
+      state.diagram = await api.restoreElement(state.project.id, button.dataset.restoreElementVersion, { diagram_id: state.diagram.id, element_id: elementId });
+      state.historyOpen = false;
+      renderShell();
+      bus.emit("diagram:changed", state.diagram);
+      bus.emit("toast", "Element restored");
+    });
+  });
+  document.querySelectorAll("[data-restore-diagram-version]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!confirm(`Restore current diagram from project version ${button.dataset.restoreDiagramVersion}?`)) return;
+      state.diagram = await api.restoreDiagram(state.project.id, button.dataset.restoreDiagramVersion, { diagram_id: state.diagram.id });
+      state.diagrams = state.diagrams.map((diagram) => diagram.id === state.diagram.id ? state.diagram : diagram);
+      state.historyOpen = false;
+      renderShell();
+      bus.emit("diagram:changed", state.diagram);
+      bus.emit("toast", "Diagram restored");
+    });
+  });
   document.querySelector("#project-title.top-project-name")?.addEventListener("click", () => {
     const button = document.querySelector("#project-title.top-project-name");
     if (!button || !state.project) return;
@@ -491,6 +728,7 @@ async function loadWorkspace() {
   updateWorkspaceTitle();
   bus.emit("bootstrap", data);
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
+  if (state.view === "editor") synchronization.start();
 }
 
 async function openProject(projectId, { updateHistory = true } = {}) {
@@ -510,6 +748,7 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   updateWorkspaceTitle();
   bus.emit("bootstrap", { projects: [state.project], diagrams: state.diagrams });
   if (state.diagram) bus.emit("diagram:changed", state.diagram);
+  synchronization.start();
   try {
     await loadModelRepository(projectId);
     bus.emit("repository:changed", state.modelRepository);
@@ -599,6 +838,12 @@ bus.on("auth:logout", async () => {
 bus.on("project:open", (projectId) => openProject(projectId).catch((error) => bus.emit("toast", `Could not open project: ${error.message}`)));
 bus.on("dashboard:open", () => {
   if (state.view === "editor") showDashboard();
+});
+bus.on("selection:changed", (selection) => synchronization.publishPresence(null, selection));
+bus.on("canvas:pointer", (cursor) => synchronization.publishPresence(cursor, state.selectedElementIds ?? []));
+bus.on("comment:create", (comment) => synchronization.addComment(comment).catch((error) => bus.emit("toast", error.message)));
+bus.on("collaboration:changed", () => {
+  if (state.historyOpen) renderShell();
 });
 
 window.addEventListener("popstate", async (event) => {

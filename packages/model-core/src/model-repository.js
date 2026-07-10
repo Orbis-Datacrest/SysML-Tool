@@ -1,18 +1,30 @@
+import { requirementRelationshipKinds } from "./requirements-management.js";
+import { portKinds, validateInterfaceConnection } from "./interface-management.js";
+import { createUnitRegistry, validateQuantityCompatibility } from "./units-system.js";
+
 const semanticKeys = {
   package: ["memberIds", "importedPackageIds"],
-  interface: ["operations", "receptions", "properties"],
-  block: ["parts", "references", "values", "operations", "constraints"],
-  requirement: ["requirementId", "text", "owner", "verificationMethod", "approvalStatus", "risk", "priority"],
-  port: ["direction", "interfaceType", "multiplicity", "conjugated"],
+  interface: ["operations", "receptions", "properties", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  "interface-block": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  "interface-definition": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  block: ["parts", "references", "values", "operations", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"],
+  requirement: ["requirementId", "text", "parentRequirementId", "owner", "verificationMethod", "verificationStatus", "approvalStatus", "risk", "priority", "baseline"],
+  port: ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
+  "proxy-port": ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
+  "full-port": ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
   activity: ["parameters", "objectFlows", "guards", "rates"],
   state: ["entry", "exit", "doActivity"],
-  "value-type": ["unit", "quantityKind", "dimensions"],
-  "constraint-block": ["parameters", "constraints"]
+  "value-type": ["unit", "quantityKind", "dimensions", "quantity", "quantitySchema", "min", "max", "default"],
+  "unit": ["symbol", "unitSymbol", "quantityKind", "factor", "conversionFactor", "offset", "dimension"],
+  "quantity-kind": ["quantityKind", "dimension"],
+  "constraint-block": ["parameters", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"]
 };
 
 const legacyAliases = {
-  requirement: { id: "requirementId", verification_method: "verificationMethod", approval_status: "approvalStatus" },
-  port: { interface_type: "interfaceType", conjugation: "conjugated" },
+  requirement: { id: "requirementId", parent_id: "parentRequirementId", verification_method: "verificationMethod", verification_status: "verificationStatus", approval_status: "approvalStatus" },
+  port: { interface_id: "interfaceId", interface_type: "interfaceType", conjugation: "conjugated" },
+  "proxy-port": { interface_id: "interfaceId", interface_type: "interfaceType", conjugation: "conjugated" },
+  "full-port": { interface_id: "interfaceId", interface_type: "interfaceType", conjugation: "conjugated" },
   "value-type": { quantity_kind: "quantityKind" }
 };
 
@@ -125,10 +137,20 @@ export function validateRelationshipCompatibility(relationship, elements) {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const source = byId.get(relationship.source_id);
   const target = byId.get(relationship.target_id);
+  const unitRegistry = createUnitRegistry({ elements });
   const diagnostics = [];
   if (!source) diagnostics.push(`Missing source ${relationship.source_id}`);
   if (!target) diagnostics.push(`Missing target ${relationship.target_id}`);
   if (relationship.kind === "satisfy" && target?.kind !== "requirement") diagnostics.push("Satisfy must target a requirement");
   if (relationship.kind === "verify" && target?.kind !== "requirement") diagnostics.push("Verify must target a requirement");
+  if (requirementRelationshipKinds.includes(relationship.kind) && relationship.kind !== "trace" && ![source?.kind, target?.kind].includes("requirement")) diagnostics.push(`${relationship.kind} must involve a requirement`);
+  if (["connector", "item-flow"].includes(relationship.kind) && portKinds.includes(source?.kind) && portKinds.includes(target?.kind)) diagnostics.push(...validateInterfaceConnection(relationship, { elements, relationships: [] }).diagnostics);
+  const quantityFor = (element) => {
+    const semantic = element?.semantic ?? element?.properties ?? {};
+    if (semantic.quantity) return semantic.quantity;
+    if (semantic.value !== undefined || semantic.unit || semantic.quantityKind) return { value: semantic.value ?? semantic.default ?? semantic.nominal ?? 0, unit: semantic.unit, quantityKind: semantic.quantityKind };
+    return null;
+  };
+  diagnostics.push(...validateQuantityCompatibility(quantityFor(source), quantityFor(target), unitRegistry).diagnostics);
   return { status: diagnostics.length ? "invalid" : "valid", diagnostics };
 }

@@ -2,6 +2,10 @@ import { diagramCatalog } from "./diagram-catalog.js";
 
 export * from "./model-repository.js";
 export * from "./validation-engine.js";
+export * from "./requirements-management.js";
+export * from "./interface-management.js";
+export * from "./units-system.js";
+export * from "./versioning-collaboration.js";
 
 export { commonElements, diagramCatalog, isPaletteItemAllowed, paletteForDiagram } from "./diagram-catalog.js";
 
@@ -9,7 +13,11 @@ export const diagramTypes = diagramCatalog.map((diagram) => diagram.value);
 
 export const elementKinds = [
   "class",
+  "compact-class",
   "interface",
+  "interface-class",
+  "interface-definition",
+  "template-class",
   "block",
   "package",
   "requirement",
@@ -23,7 +31,7 @@ export const elementKinds = [
   "message",
   "port",
   "connector",
-  "note", "comment", "enumeration", "data-type", "object", "slot", "component", "artifact",
+  "note", "comment", "enumeration", "data-type", "object", "object-compact", "slot", "component", "artifact",
   "node", "device", "execution-environment", "model", "import", "structured-classifier", "part",
   "collaboration", "profile", "stereotype", "metaclass", "system-boundary", "initial-node", "final-node",
   "fork-join", "initial-state", "final-state", "choice", "history-state", "activation", "combined-fragment",
@@ -33,7 +41,8 @@ export const elementKinds = [
   "rationale", "problem", "primitive-type", "signal", "accept-event-action", "send-signal-action", "merge-node",
   "activity-final", "flow-final", "fork-node", "join-node", "input-pin", "output-pin",
   "activity-partition", "composite-state", "junction", "entry-point", "exit-point", "terminate",
-  "destruction-occurrence", "continuation", "rate"
+  "destruction-occurrence", "continuation", "rate", "nary-association", "divider-vertical", "self-association",
+  "frame-fragment", "callout", "text-label", "symbol-braces", "symbol-guillemets"
   , "diagram-frame", "constraint", "instance-specification", "provided-interface", "required-interface", "region",
   "state-timeline", "unit", "quantity-kind", "part-property", "reference-property", "proxy-port", "full-port",
   "constraint-parameter", "control-operator"

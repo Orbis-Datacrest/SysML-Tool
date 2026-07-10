@@ -1,9 +1,9 @@
 import { registerMfe } from "../../../packages/ui/src/moduleRegistry.js";
-import { elementKinds, isPaletteItemAllowed } from "../../../packages/model-core/src/index.js";
+import { elementKinds, isPaletteItemAllowed, nextRequirementId, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import {
-  MIN_NODE_HEIGHT, MIN_NODE_WIDTH, applyElementStyle, clamp, expandGroupedSelection,
+  MIN_NODE_HEIGHT, MIN_NODE_WIDTH, alignElements, autoLayoutElements, clamp, distributeElements, expandGroupedSelection,
   groupElements, moveSelection, nodesInRect, removeElements, reorderElements,
-  selectionBounds, snap, ungroupElements
+  selectionBounds, snap, snapLinesForMove, ungroupElements
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
 
@@ -22,8 +22,24 @@ const relationshipTypes = [
   ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
 ];
 const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
+const themeNodeStyles = {
+  dark: { borderColor: "#6aaeff", fillColor: "#172033", textColor: "#f4f7fb" },
+  light: { borderColor: "#1d4ed8", fillColor: "#ffffff", textColor: "#111827" }
+};
 const lightTextKinds = new Set(["actor", "initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node", "destruction-occurrence"]);
 const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };
+const pageSizes = {
+  "letter-landscape": { label: "Letter", width: 1056, height: 816 },
+  "a4-landscape": { label: "A4", width: 1123, height: 794 },
+  "a3-landscape": { label: "A3", width: 1588, height: 1123 },
+  "engineering-d": { label: "Eng D", width: 3264, height: 2112 }
+};
+const defaultPageSize = "a3-landscape";
+const shortcutRows = [
+  ["Ctrl+A", "Select all"], ["Ctrl+C / X / V", "Copy, cut, paste"], ["Ctrl+D", "Duplicate"],
+  ["Ctrl+G", "Group"], ["Ctrl+Shift+G", "Ungroup"], ["Ctrl+F", "Search"],
+  ["?", "Keyboard help"], ["Delete", "Delete selection"], ["Space-drag", "Pan"], ["Ctrl+wheel", "Zoom"]
+];
 
 function id(prefix) { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
 function escapeHtml(value = "") {
@@ -48,11 +64,26 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let spaceHeld = false;
   let activeRelationshipKind = null;
   let activeRelationshipLabel = null;
+  let gridSize = state.diagram?.metadata?.gridSize ?? state.diagram?.metadata?.grid ?? 20;
+  let showGrid = state.diagram?.metadata?.showGrid ?? true;
+  let snapGuides = [];
+  let searchOpen = false;
+  let searchQuery = "";
+  let shortcutHelpOpen = false;
+  let printPreviewOpen = false;
+  let collaboration = state.collaboration ?? { presence: [], comments: [] };
+  let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
 
   const selectedIds = () => state.selectedElementIds ?? [];
-  const nodeStyle = (node) => ({ ...defaultNodeStyle, textColor: lightTextKinds.has(node.kind) ? "#f4f7fb" : defaultNodeStyle.textColor, ...(node.style ?? {}) });
+  const currentTheme = () => document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  const themeDefaultNodeStyle = (kind) => ({
+    ...defaultNodeStyle,
+    ...themeNodeStyles[currentTheme()],
+    textColor: lightTextKinds.has(kind) ? "#f4f7fb" : themeNodeStyles[currentTheme()].textColor
+  });
+  const nodeStyle = (node) => ({ ...themeDefaultNodeStyle(node.kind), ...(node.style ?? {}) });
   const relationshipStyle = (relationship) => ({ ...defaultRelationshipStyle, ...(relationship.style ?? {}) });
   const pointOnCanvas = (event) => {
     const rect = element.getBoundingClientRect();
@@ -83,7 +114,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     "actor", "decision", "merge-node", "choice", "initial-node", "initial-state", "final-node", "final-state",
     "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node",
     "accept-event-action", "send-signal-action", "destruction-occurrence", "lifeline", ...packageKinds, ...noteKinds,
-    ...ellipseKinds, ...roundedKinds
+    ...ellipseKinds, ...roundedKinds, "component", "object", "compact-class", "object-compact", "interface-class", "template-class",
+    "nary-association", "divider-vertical", "self-association", "frame-fragment", "callout", "text-label",
+    "symbol-braces", "symbol-guillemets"
   ]);
 
   const compartmentDefinitions = [
@@ -102,6 +135,21 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${escapeHtml(value)}</div>`;
   }
 
+  function sectionValue(node, section, fallback = "") {
+    const value = node.properties?.[section];
+    if (Array.isArray(value)) return value.join("\n") || fallback;
+    return String(value ?? fallback);
+  }
+
+  function editableSection(node, section, label, className, fallback = "") {
+    const value = sectionValue(node, section, fallback);
+    if (editingNode?.id === node.id && editingNode.section === section) {
+      return `<div class="${className} editing">${sectionEditor(node, section, value, label)}</div>`;
+    }
+    const content = value ? escapeHtml(value).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${escapeHtml(label.toLowerCase())}...</span>`;
+    return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${content}</div>`;
+  }
+
   function renderNodeContent(node) {
     const simpleName = (className, label = `${nodeLabel(node.kind)} text`) => editableText(node, "name", node.name, className, label);
     if (node.kind === "actor") return `<svg class="actor-figure" viewBox="0 0 100 126" aria-hidden="true"><circle cx="50" cy="20" r="17"></circle><path d="M50 37v50M18 51h64M50 87 19 123M50 87l31 36"></path></svg>${simpleName("actor-name")}`;
@@ -111,9 +159,44 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (node.kind === "accept-event-action") return `<div class="event-action-shape accept"></div>${simpleName("shape-caption centered")}`;
     if (node.kind === "send-signal-action") return `<div class="event-action-shape send"></div>${simpleName("shape-caption centered")}`;
     if (node.kind === "destruction-occurrence") return `<div class="destruction-shape"></div>${simpleName("shape-caption below")}`;
+    if (node.kind === "component") return `<div class="component-lugs"><span></span><span></span></div>${simpleName("component-content", "Component name")}`;
+    if (node.kind === "object") return `<div class="object-content">${simpleName("object-title", "Object name")}${editableSection(node, "attributes", "Attributes", "object-attributes", "Attributes")}</div>`;
+    if (node.kind === "compact-class") return simpleName("compact-class-content", "Class name");
+    if (node.kind === "object-compact") return simpleName("object-compact-content", "Object name");
+    if (node.kind === "interface-class") return `<div class="structured-class-content interface-class-content">
+      <div class="structured-class-title"><strong>&lt;&lt;interface&gt;&gt;</strong>${simpleName("", "Interface name")}</div>
+      ${editableSection(node, "attributes", "Attributes", "structured-class-section", "Attributes")}
+      ${editableSection(node, "operations", "Operations", "structured-class-section", "Operations")}
+      ${editableSection(node, "responsibilities", "Acting / Charge", "structured-class-section", "Acting/Charge")}
+    </div>`;
+    if (node.kind === "template-class") return `<div class="template-parameter">${editableSection(node, "templateParameter", "Template parameter", "template-parameter-text", "T")}</div><div class="structured-class-content template-class-content">
+      <div class="structured-class-title">${simpleName("", "Template class name")}</div>
+      ${editableSection(node, "attributes", "Attributes", "structured-class-section")}
+      ${editableSection(node, "operations", "Operations", "structured-class-section")}
+    </div>`;
+    if (node.kind === "nary-association") return `<div class="nary-shape"></div>${simpleName("shape-caption below", "N-ary association name")}`;
+    if (node.kind === "divider-vertical") return `<div class="divider-vertical-line"></div>${simpleName("divider-label", "Divider text")}`;
+    if (node.kind === "self-association") return `<div class="self-association-class">${simpleName("", "Class name")}</div><div class="self-association-loop"></div>${editableSection(node, "upperMultiplicity", "Upper multiplicity", "self-association-multiplicity top", "0..1")}${editableSection(node, "lowerMultiplicity", "Lower multiplicity", "self-association-multiplicity bottom", "0..*")}`;
+    if (node.kind === "frame-fragment") return `<div class="frame-fragment-corner"></div>${simpleName("frame-fragment-label", "Frame label")}`;
+    if (node.kind === "callout") return `<div class="callout-dot"></div><div class="callout-curve"></div>${simpleName("callout-text", "Callout text")}`;
+    if (node.kind === "text-label") return simpleName("text-label-content", "Text label");
+    if (node.kind === "symbol-braces") return simpleName("symbol-content", "Symbol text");
+    if (node.kind === "symbol-guillemets") return simpleName("symbol-content", "Symbol text");
     if (node.kind === "lifeline") return `${simpleName("lifeline-head")}<div class="lifeline-line"></div>`;
     if (packageKinds.has(node.kind)) return `<div class="package-tab"></div><div class="package-body"><strong>${simpleName("")}</strong><small>«${escapeHtml(nodeLabel(node.kind))}»</small></div>`;
     if (noteKinds.has(node.kind)) return `<div class="note-fold"></div>${simpleName("note-content")}`;
+    if (node.kind === "requirement") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Requirement name")}<div class="node-stereotype">«requirement»</div></div>
+      <div class="node-compartments">
+        <section class="node-compartment"><span class="compartment-label">id</span><div class="compartment-content">${escapeHtml(node.properties?.requirementId ?? node.id)}</div></section>
+        <section class="node-compartment" data-edit-section="text" title="Double-click to edit requirement text"><span class="compartment-label">text</span><div class="compartment-content">${escapeHtml(node.properties?.text ?? "").replace(/\n/g, "<br>") || `<span class="compartment-placeholder">Add shall statement...</span>`}</div></section>
+        <section class="node-compartment"><span class="compartment-label">verification</span><div class="compartment-content">${escapeHtml([node.properties?.verificationMethod, node.properties?.verificationStatus].filter(Boolean).join(" / "))}</div></section>
+      </div>`;
+    if (node.kind === "interface-block" || node.kind === "interface-definition") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Interface name")}<div class="node-stereotype">«${escapeHtml(node.properties?.interfaceKind ?? "interface")} interface»</div></div>
+      <div class="node-compartments">
+        <section class="node-compartment"><span class="compartment-label">protocols</span><div class="compartment-content">${escapeHtml((node.properties?.protocols ?? []).join(", "))}</div></section>
+        <section class="node-compartment"><span class="compartment-label">signals</span><div class="compartment-content">${escapeHtml((node.properties?.signals ?? []).join(", "))}</div></section>
+        <section class="node-compartment"><span class="compartment-label">limits</span><div class="compartment-content">${escapeHtml([node.properties?.voltage ? `${node.properties.voltage} V` : "", node.properties?.current ? `${node.properties.current} A` : "", node.properties?.bandwidth ? `${node.properties.bandwidth} bps` : ""].filter(Boolean).join(" · "))}</div></section>
+      </div>`;
     if (ellipseKinds.has(node.kind)) return simpleName("ellipse-content");
     if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${simpleName("")}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
     const title = editableText(node, "name", node.name, "node-title-text", "Name");
@@ -121,13 +204,28 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <div class="node-compartments">${compartmentDefinitions.map(({ key, label }) => {
         const values = node.properties?.[key] ?? [];
         const text = Array.isArray(values) ? values.join("\n") : String(values ?? "");
+        const collapsed = Boolean(node.properties?.collapsedCompartments?.[key]);
+        const toggle = `<button class="compartment-toggle" data-compartment-toggle="${node.id}" data-compartment-key="${key}" title="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(label)}">${collapsed ? "+" : "−"}</button>`;
         if (editingNode?.id === node.id && editingNode.section === key) return `<section class="node-compartment editing">${sectionEditor(node, key, text, label)}</section>`;
-        return `<section class="node-compartment" data-edit-section="${key}" title="Double-click to edit ${label.toLowerCase()}"><span class="compartment-label">${label}</span><div class="compartment-content">${text ? escapeHtml(text).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${label.toLowerCase()}…</span>`}</div></section>`;
+        return `<section class="node-compartment ${collapsed ? "collapsed" : ""}" data-edit-section="${key}" title="Double-click to edit ${label.toLowerCase()}"><span class="compartment-label">${toggle}${label}</span><div class="compartment-content">${collapsed ? "" : text ? escapeHtml(text).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${label.toLowerCase()}…</span>`}</div></section>`;
       }).join("")}</div>`;
   }
 
   function defaultSizeFor(kind) {
     if (kind === "actor") return { width: 110, height: 170 };
+    if (kind === "compact-class") return { width: 118, height: 56 };
+    if (kind === "component") return { width: 165, height: 98 };
+    if (kind === "object") return { width: 155, height: 78 };
+    if (kind === "object-compact") return { width: 150, height: 78 };
+    if (kind === "interface-class") return { width: 180, height: 190 };
+    if (kind === "template-class") return { width: 170, height: 150 };
+    if (kind === "nary-association") return { width: 100, height: 86 };
+    if (kind === "divider-vertical") return { width: 72, height: 210 };
+    if (kind === "self-association") return { width: 220, height: 112 };
+    if (kind === "frame-fragment") return { width: 150, height: 110 };
+    if (kind === "callout") return { width: 170, height: 150 };
+    if (kind === "text-label") return { width: 120, height: 44 };
+    if (["symbol-braces", "symbol-guillemets"].includes(kind)) return { width: 98, height: 42 };
     if (ellipseKinds.has(kind)) return { width: 160, height: 86 };
     if (diamondKinds.has(kind)) return { width: 110, height: 90 };
     if (circleKinds.has(kind)) return { width: 56, height: 56 };
@@ -139,6 +237,39 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (roundedKinds.has(kind)) return { width: 160, height: 90 };
     if (noteKinds.has(kind)) return { width: 150, height: 110 };
     return { width: 190, height: 170 };
+  }
+
+  function defaultNameFor(kind) {
+    const names = {
+      "compact-class": "Class",
+      "interface-class": "Class",
+      "template-class": "Template Class",
+      component: "Component Name",
+      object: ":Object",
+      "object-compact": ":Object",
+      "nary-association": "NARY",
+      "divider-vertical": "{Text}",
+      "self-association": "Class",
+      "frame-fragment": "Name",
+      callout: "Text",
+      "text-label": "Text",
+      "symbol-braces": "{ }",
+      "symbol-guillemets": "<< >>"
+    };
+    return names[kind] ?? nodeLabel(kind);
+  }
+
+  function defaultPropertiesFor(kind, diagram) {
+    if (kind === "requirement") {
+      const requirementId = nextRequirementId({ elements: diagram.elements.map((node) => ({ id: node.id, kind: node.kind, semantic: node.properties ?? {} })) });
+      return { requirementId, text: "The system shall ...", owner: "", priority: "medium", risk: "medium", approvalStatus: "draft", verificationStatus: "not-started", verificationMethod: "test", parentRequirementId: "", baseline: { id: "working", version: diagram.version ?? 1 } };
+    }
+    if (kind === "interface-block" || kind === "interface-definition") return { interfaceId: id("if"), interfaceKind: "software", signals: [], commands: [], protocols: [], pins: [], pinAssignments: {}, voltage: null, current: null, frequency: null, bandwidth: null, units: { voltage: "V", current: "A", frequency: "Hz", bandwidth: "bps" }, compatibleWith: [] };
+    if (["port", "proxy-port", "full-port"].includes(kind)) return { direction: "inout", interfaceId: "", multiplicity: "1" };
+    if (kind === "unit") return { unitSymbol: "u", quantityKind: "dimensionless", factor: 1, offset: 0, dimension: {} };
+    if (kind === "quantity-kind") return { quantityKind: "customQuantity", dimension: {} };
+    if (kind === "value-type") return { quantity: { value: 0, unit: "1", quantityKind: "dimensionless" }, quantitySchema: { unit: "1", quantityKind: "dimensionless", min: null, max: null, default: 0 } };
+    return {};
   }
 
   function fitNodeToContent(node) {
@@ -277,6 +408,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <button data-command="delete" class="context-danger" role="menuitem">Delete <kbd>Del</kbd></button>
       <span class="context-separator" role="separator"></span>
       <button data-command="cut" role="menuitem">Cut <kbd>Ctrl+X</kbd></button><button data-command="copy" role="menuitem">Copy <kbd>Ctrl+C</kbd></button><button data-command="duplicate" role="menuitem">Duplicate <kbd>Ctrl+D</kbd></button>
+      <button data-command="comment" role="menuitem">Comment on selection</button>
       <span class="context-separator"></span>
       ${selected.length > 1 && !completeSingleGroup ? `<button data-command="group" role="menuitem">Group <kbd>Ctrl+G</kbd></button>` : ""}
       ${selectedGroups.size ? `<button data-command="ungroup" role="menuitem">Ungroup <kbd>⇧Ctrl+G</kbd></button>` : ""}
@@ -285,21 +417,101 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     </div>`;
   }
 
+  function renderCollaborationOverlay(diagram) {
+    const nodeMap = new Map((diagram.elements ?? []).map((node) => [node.id, node]));
+    const selections = (collaboration.presence ?? []).flatMap((person) => (person.selection ?? []).map((nodeId) => {
+      const node = nodeMap.get(nodeId);
+      if (!node) return "";
+      return `<div class="remote-selection" style="left:${node.x - 5}px;top:${node.y - 5}px;width:${node.width + 10}px;height:${node.height + 10}px;--collab-color:${person.color}" title="${escapeHtml(person.name)} selected ${escapeHtml(node.name)}"><span>${escapeHtml(person.name)}</span></div>`;
+    }));
+    const cursors = (collaboration.presence ?? []).map((person) => {
+      if (!person.cursor) return "";
+      return `<div class="live-cursor" style="left:${person.cursor.x}px;top:${person.cursor.y}px;--collab-color:${person.color}"><span></span><strong>${escapeHtml(person.name)}</strong></div>`;
+    });
+    const comments = (collaboration.comments ?? []).map((comment) => {
+      const node = nodeMap.get(comment.anchor_id);
+      if (!node) return "";
+      return `<button class="comment-pin" data-focus-node="${comment.anchor_id}" style="left:${node.x + node.width - 8}px;top:${node.y - 8}px" title="${escapeHtml(comment.author)}: ${escapeHtml(comment.body)}">${(collaboration.comments ?? []).filter((item) => item.anchor_id === comment.anchor_id).length}</button>`;
+    });
+    return `${selections.join("")}${cursors.join("")}${comments.join("")}`;
+  }
+
+  function pageFrame() {
+    return pageSizes[defaultPageSize];
+  }
+
+  function diagramBounds(diagram, ids = []) {
+    const candidates = ids.length ? ids : diagram.elements.map((node) => node.id);
+    return selectionBounds(diagram.elements, candidates) ?? { left: 0, top: 0, right: pageFrame().width, bottom: pageFrame().height };
+  }
+
+  function renderGuides() {
+    if (!snapGuides.length) return "";
+    return snapGuides.map((guide) => guide.axis === "x"
+      ? `<div class="smart-guide vertical" style="left:${guide.value}px"></div>`
+      : `<div class="smart-guide horizontal" style="top:${guide.value}px"></div>`).join("");
+  }
+
+  function renderMinimap(diagram) {
+    const scale = 160 / CANVAS.width;
+    const view = { x: element.scrollLeft / zoom * scale, y: element.scrollTop / zoom * scale, width: element.clientWidth / zoom * scale, height: element.clientHeight / zoom * scale };
+    return `<div class="canvas-minimap" title="Diagram minimap">
+      <div class="minimap-plane" style="width:${CANVAS.width * scale}px;height:${CANVAS.height * scale}px">
+        ${diagram.elements.map((node) => `<span class="minimap-node" style="left:${node.x * scale}px;top:${node.y * scale}px;width:${Math.max(2, node.width * scale)}px;height:${Math.max(2, node.height * scale)}px"></span>`).join("")}
+        <span class="minimap-viewport" style="left:${view.x}px;top:${view.y}px;width:${view.width}px;height:${view.height}px"></span>
+      </div>
+    </div>`;
+  }
+
+  function renderSearchOverlay(diagram) {
+    if (!searchOpen) return "";
+    const query = searchQuery.trim().toLowerCase();
+    const results = query ? diagram.elements.filter((node) => `${node.name} ${node.kind}`.toLowerCase().includes(query)).slice(0, 20) : [];
+    return `<div class="canvas-overlay search-overlay">
+      <input id="diagram-search" value="${escapeHtml(searchQuery)}" placeholder="Search elements" aria-label="Search elements">
+      <div class="overlay-results">${results.map((node) => `<button data-focus-node="${node.id}"><strong>${escapeHtml(node.name)}</strong><span>${escapeHtml(node.kind)}</span></button>`).join("") || `<span class="overlay-empty">${query ? "No matches" : "Type to search"}</span>`}</div>
+    </div>`;
+  }
+
+  function renderShortcutHelp() {
+    if (!shortcutHelpOpen) return "";
+    return `<div class="canvas-overlay shortcut-overlay"><div class="overlay-title">Keyboard shortcuts</div>
+      <div class="shortcut-grid">${shortcutRows.map(([keys, label]) => `<kbd>${escapeHtml(keys)}</kbd><span>${escapeHtml(label)}</span>`).join("")}</div>
+    </div>`;
+  }
+
+  function renderPrintPreview(diagram) {
+    if (!printPreviewOpen) return "";
+    const page = pageFrame();
+    return `<div class="print-preview-backdrop"><div class="print-preview">
+      <div class="print-preview-header"><strong>Print preview</strong><button data-command="close-print">Close</button></div>
+      <div class="print-sheet" style="aspect-ratio:${page.width}/${page.height}"><span>${escapeHtml(page.label)} · ${page.width} × ${page.height}</span></div>
+      <button data-command="print-diagram" class="primary">Print</button>
+    </div></div>`;
+  }
+
   function render() {
     const diagram = state.diagram;
     if (!diagram) return;
+    gridSize = diagram.metadata?.gridSize ?? diagram.metadata?.grid ?? gridSize;
+    showGrid = diagram.metadata?.showGrid ?? showGrid;
     const scroll = { left: element.scrollLeft, top: element.scrollTop };
     const hostRect = element.getBoundingClientRect();
     const previewTop = paletteHover ? clamp(paletteHover.clientY - 100, hostRect.top + 68, hostRect.bottom - 224) : 0;
     element.innerHTML = `<div class="canvas-chrome"><div class="canvas-toolbar">
       <button id="history-undo" title="Undo last change" aria-label="Undo last change" ${state.history.length ? "" : "disabled"}>↶</button><button id="history-redo" title="Redo last change" aria-label="Redo last change" ${state.future.length ? "" : "disabled"}>↷</button>
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" class="zoom-level">${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
-      <button id="select-all" title="Select all elements" ${diagram.elements.length ? "" : "disabled"}>Select all</button><span class="toolbar-hint">${activeRelationshipKind ? `${escapeHtml(activeRelationshipLabel)} armed · drag a node side handle to connect · Esc cancels` : "Shift-click selects precisely · Drag a side handle to connect · Space-drag to pan"}</span>
+      <button id="fit-diagram" title="Fit diagram">Fit</button><button id="fit-selection" title="Fit selection" ${selectedIds().length ? "" : "disabled"}>Fit sel</button>
+      <button id="select-all" title="Select all elements" ${diagram.elements.length ? "" : "disabled"}>Select all</button>
+      <select id="grid-size" title="Grid size">${[0, 10, 20, 40, 80].map((size) => `<option value="${size}" ${gridSize === size ? "selected" : ""}>${size ? `${size}px grid` : "Grid off"}</option>`).join("")}</select>
+      <button id="keyboard-help" title="Keyboard shortcuts">?</button>
     </div>${paletteHover ? `<div class="palette-canvas-preview" style="left:${hostRect.left + 14}px;top:${previewTop}px" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
       ${pointerDrag ? `<div class="canvas-drag-ghost" style="left:${pointerDrag.clientX + 16}px;top:${pointerDrag.clientY + 16}px"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
-    <div class="canvas-content" style="width:${CANVAS.width * zoom}px;height:${CANVAS.height * zoom}px">
+    <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}" style="width:${CANVAS.width * zoom}px;height:${CANVAS.height * zoom}px;--grid-size:${Math.max(1, gridSize)}px">
       <div id="canvas-plane" style="width:${CANVAS.width}px;height:${CANVAS.height}px;transform:scale(${zoom})">
         ${renderRelationships(diagram)}
+        ${renderGuides()}
+        ${renderCollaborationOverlay(diagram)}
         ${selectedIds().length > 1 && (selectionFrame ?? selectionBounds(diagram.elements, selectedIds())) ? (() => { const bounds = selectionFrame ?? selectionBounds(diagram.elements, selectedIds()); return `<div class="group-selection-box" data-selection-area style="left:${bounds.left}px;top:${bounds.top}px;width:${bounds.right - bounds.left}px;height:${bounds.bottom - bounds.top}px" title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>`; })() : ""}
         ${diagram.elements.map((node) => {
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
@@ -311,7 +523,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         }).join("")}
         ${gesture?.type === "marquee" ? `<div class="selection-marquee" style="left:${gesture.rect.left}px;top:${gesture.rect.top}px;width:${gesture.rect.right - gesture.rect.left}px;height:${gesture.rect.bottom - gesture.rect.top}px"></div>` : ""}
       </div>
-    </div>${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}`;
+    </div>${renderMinimap(diagram)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram)}${renderShortcutHelp()}${renderPrintPreview(diagram)}`;
     element.scrollLeft = scroll.left; element.scrollTop = scroll.top;
     bindRenderedEvents();
   }
@@ -334,7 +546,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
     element.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
     element.querySelector("#zoom-reset").addEventListener("click", () => setZoom(1));
+    element.querySelector("#fit-diagram").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram)));
+    element.querySelector("#fit-selection").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram, selectedIds())));
     element.querySelector("#select-all").addEventListener("click", () => setSelection(state.diagram.elements.map((node) => node.id)));
+    element.querySelector("#keyboard-help").addEventListener("click", () => { shortcutHelpOpen = !shortcutHelpOpen; render(); });
+    element.querySelector("#grid-size").addEventListener("change", (event) => setCanvasMetadata({ gridSize: Number(event.target.value), showGrid: Number(event.target.value) > 0 }));
+    const searchInput = element.querySelector("#diagram-search");
+    searchInput?.addEventListener("input", (event) => { searchQuery = event.target.value; render(); });
+    searchInput?.addEventListener("keydown", (event) => { if (event.key === "Escape") { searchOpen = false; render(); } });
+    if (searchInput) requestAnimationFrame(() => { searchInput.focus(); searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length); });
+    element.querySelectorAll("[data-focus-node]").forEach((button) => button.addEventListener("click", () => focusNode(button.dataset.focusNode)));
+    element.querySelectorAll("[data-compartment-toggle]").forEach((button) => button.addEventListener("click", (event) => {
+      event.preventDefault(); event.stopPropagation(); toggleCompartment(button.dataset.compartmentToggle, button.dataset.compartmentKey);
+    }));
     element.querySelectorAll("[data-rel]").forEach((target) => {
       target.addEventListener("pointerdown", (event) => { event.stopPropagation(); contextMenu = null; setSelection([], target.dataset.rel); });
       target.addEventListener("contextmenu", (event) => openRelationshipToolbar(event, target.dataset.rel));
@@ -402,10 +626,41 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(button.dataset.command)));
   }
 
+  function setCanvasMetadata(changes) {
+    mutate((next) => { next.metadata = { ...(next.metadata ?? {}), ...changes }; });
+  }
+
+  function focusNode(nodeId) {
+    const node = state.diagram.elements.find((item) => item.id === nodeId);
+    if (!node) return;
+    searchOpen = false; shortcutHelpOpen = false;
+    setSelection([node.id]);
+    element.scrollTo({ left: Math.max(0, (node.x + node.width / 2) * zoom - element.clientWidth / 2), top: Math.max(0, (node.y + node.height / 2) * zoom - element.clientHeight / 2), behavior: "smooth" });
+  }
+
+  function fitToBounds(bounds) {
+    if (!bounds) return;
+    const padding = 90;
+    const width = Math.max(1, bounds.right - bounds.left + padding * 2);
+    const height = Math.max(1, bounds.bottom - bounds.top + padding * 2);
+    zoom = clamp(Math.min(element.clientWidth / width, element.clientHeight / height), ZOOM.minimum, ZOOM.maximum);
+    render();
+    element.scrollLeft = Math.max(0, (bounds.left - padding) * zoom);
+    element.scrollTop = Math.max(0, (bounds.top - padding) * zoom);
+  }
+
+  function toggleCompartment(nodeId, key) {
+    mutate((next) => {
+      const node = next.elements.find((item) => item.id === nodeId);
+      node.properties ??= {};
+      node.properties.collapsedCompartments = { ...(node.properties.collapsedCompartments ?? {}), [key]: !node.properties.collapsedCompartments?.[key] };
+    });
+  }
+
   function beginNodeEditing(event, nodeId, section = "name") {
     event.preventDefault(); event.stopPropagation();
     editingNode = { id: nodeId, section: section || "name", clientX: event.clientX, clientY: event.clientY };
-    gesture = null;
+    gesture = null; snapGuides = [];
     render();
   }
 
@@ -464,7 +719,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function applyStyle(property, value) {
     if (!selectedIds().length) return;
-    mutate((next) => applyElementStyle(next.elements, selectedIds(), property, value, defaultNodeStyle));
+    mutate((next) => {
+      const selected = new Set(selectedIds());
+      next.elements.forEach((node) => {
+        if (selected.has(node.id)) node.style = { ...themeDefaultNodeStyle(node.kind), ...(node.style ?? {}), [property]: value };
+      });
+    });
   }
 
   function applyRelationshipStyle(property, value) {
@@ -476,17 +736,39 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     });
   }
 
-  function copySelection() { clipboard = state.diagram.elements.filter((node) => selectedIds().includes(node.id)).map((node) => structuredClone(node)); pasteOffset = 0; }
+  function copySelection() {
+    const ids = new Set(selectedIds());
+    clipboard = state.diagram.elements.filter((node) => ids.has(node.id)).map((node) => structuredClone(node));
+    const relationships = (state.diagram.relationships ?? []).filter((relationship) => ids.has(relationship.source_id) && ids.has(relationship.target_id)).map((relationship) => structuredClone(relationship));
+    pasteOffset = 0;
+    try { localStorage.setItem("sysml.diagramClipboard", JSON.stringify({ elements: clipboard, relationships })); } catch {}
+  }
   function duplicateSelection() {
+    if (!clipboard.length) {
+      try {
+        const stored = JSON.parse(localStorage.getItem("sysml.diagramClipboard") ?? "{}");
+        clipboard = stored.elements ?? [];
+      } catch {}
+    }
     if (!clipboard.length) copySelection();
     if (!clipboard.length) return;
     pasteOffset += 20; const newIds = []; const groupMap = new Map();
+    let storedRelationships = [];
+    try { storedRelationships = JSON.parse(localStorage.getItem("sysml.diagramClipboard") ?? "{}").relationships ?? []; } catch {}
     mutate((next) => {
+      const idMap = new Map();
       for (const copied of clipboard) {
         const duplicate = structuredClone(copied); duplicate.id = id(duplicate.kind); duplicate.name = `${duplicate.name} Copy`; duplicate.locked = false;
+        idMap.set(copied.id, duplicate.id);
         duplicate.x = clamp(copied.x + pasteOffset, 0, CANVAS.width - copied.width); duplicate.y = clamp(copied.y + pasteOffset, 0, CANVAS.height - copied.height);
         if (duplicate.groupId) { if (!groupMap.has(duplicate.groupId)) groupMap.set(duplicate.groupId, id("group")); duplicate.groupId = groupMap.get(duplicate.groupId); }
         next.elements.push(duplicate); newIds.push(duplicate.id);
+      }
+      for (const relationship of storedRelationships) {
+        if (!idMap.has(relationship.source_id) || !idMap.has(relationship.target_id)) continue;
+        const duplicate = structuredClone(relationship);
+        duplicate.id = id("rel"); duplicate.source_id = idMap.get(relationship.source_id); duplicate.target_id = idMap.get(relationship.target_id);
+        next.relationships.push(duplicate);
       }
     });
     setSelection(newIds, null, false);
@@ -494,6 +776,23 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function executeCommand(command) {
     contextMenu = null;
+    if (command === "keyboard-help") { shortcutHelpOpen = true; render(); return; }
+    if (command === "print-preview") { printPreviewOpen = true; render(); return; }
+    if (command === "close-print") { printPreviewOpen = false; render(); return; }
+    if (command === "print-diagram") { window.print(); return; }
+    if (command === "fit-selection") { fitToBounds(diagramBounds(state.diagram, selectedIds())); return; }
+    if (command === "fit-diagram") { fitToBounds(diagramBounds(state.diagram)); return; }
+    if (command === "comment") {
+      const anchorId = selectedIds()[0];
+      if (!anchorId) return;
+      const body = prompt("Comment on selected element");
+      if (body?.trim()) bus.emit("comment:create", { diagram_id: state.diagram.id, anchor_type: "element", anchor_id: anchorId, body: body.trim() });
+      render();
+      return;
+    }
+    if (command?.startsWith("align-")) { mutate((next) => alignElements(next.elements, selectedIds(), command.replace("align-", ""))); return; }
+    if (command === "distribute-horizontal" || command === "distribute-vertical") { mutate((next) => distributeElements(next.elements, selectedIds(), command.replace("distribute-", ""))); return; }
+    if (command === "auto-layout") { mutate((next) => autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20)); return; }
     if (command === "copy") { copySelection(); render(); return; }
     if (command === "duplicate") { copySelection(); duplicateSelection(); return; }
     if (command === "cut") copySelection();
@@ -572,6 +871,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("contextmenu", (event) => {
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
   });
+  window.addEventListener("click", (event) => {
+    const hasOpenToolbarSurface = searchOpen || shortcutHelpOpen || printPreviewOpen;
+    if (!hasOpenToolbarSurface) return;
+    if (event.target.closest?.(".canvas-toolbar,.canvas-overlay,.print-preview")) return;
+    searchOpen = false;
+    shortcutHelpOpen = false;
+    printPreviewOpen = false;
+    render();
+  });
   // Native browser drags (text, links, images, files, and UI fragments) never create model elements.
   element.addEventListener("dragenter", (event) => event.preventDefault());
   element.addEventListener("dragover", (event) => {
@@ -587,7 +895,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const size = defaultSizeFor(kind);
     const nodeId = id(kind);
     editingNode = { id: nodeId, section: "name" };
-    mutate((next) => next.elements.push({ id: nodeId, kind, name: nodeLabel(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: {} }));
+    mutate((next) => next.elements.push({ id: nodeId, kind, name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next) }));
     paletteHover = null;
     setSelection([nodeId]);
     return true;
@@ -609,9 +917,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       }
     }
     if (connectDrag) { const point = pointOnCanvas(event); connectDrag.x2 = point.x; connectDrag.y2 = point.y; render(); return; }
+    const hoverPoint = pointOnCanvas(event);
+    const currentTime = performance.now();
+    if (currentTime - lastPresenceSent > 250 && element.matches(":hover")) {
+      lastPresenceSent = currentTime;
+      bus.emit("canvas:pointer", { x: Math.round(hoverPoint.x), y: Math.round(hoverPoint.y) });
+    }
     if (!gesture) return;
     if (gesture.type === "pan") { element.scrollLeft = gesture.scrollLeft - (event.clientX - gesture.startX); element.scrollTop = gesture.scrollTop - (event.clientY - gesture.startY); return; }
-    const point = pointOnCanvas(event);
+    const point = hoverPoint;
     if (gesture.type === "route") {
       const next = structuredClone(state.diagram); const relationship = next.relationships.find((item) => item.id === gesture.relationshipId);
       const points = [...gesture.points]; points[gesture.index] = { x: snap(point.x, 10), y: snap(point.y, 10) };
@@ -624,7 +938,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       state.selectedElementIds = gesture.additive ? [...new Set([...gesture.baseSelection, ...hits])] : hits; render(); return;
     }
     const next = structuredClone(state.diagram); const dx = point.x - gesture.start.x; const dy = point.y - gesture.start.y;
-    if (gesture.type === "move") moveSelection(next.elements, gesture.ids, gesture.originals, dx, dy, CANVAS, 1);
+    if (gesture.type === "move") {
+      moveSelection(next.elements, gesture.ids, gesture.originals, dx, dy, CANVAS, event.altKey ? 1 : (gridSize || 1));
+      const bounds = selectionBounds(next.elements, gesture.ids);
+      snapGuides = bounds ? snapLinesForMove(next.elements, gesture.ids, bounds) : [];
+    }
     if (gesture.type === "move" && gesture.frameOriginal) {
       const original = gesture.originals[gesture.ids[0]];
       const moved = next.elements.find((node) => node.id === gesture.ids[0]);
@@ -649,8 +967,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         const sourceId = connectDrag.sourceId;
         const kind = connectDrag.kind; const label = connectDrag.label;
         const target = state.diagram.elements.find((item) => item.id === targetId); const targetAnchor = nearestAnchor(target, pointOnCanvas(event));
-        mutate((next) => { const relationship = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, sourceAnchor: connectDrag.sourceAnchor, targetAnchor, routing: "orthogonal", label, properties: {}, style: { ...defaultRelationshipStyle } }; next.relationships.push(relationship); state.selectedRelationshipId = relationship.id; state.selectedElementIds = []; });
-        activeRelationshipKind = null; activeRelationshipLabel = null;
+        const candidate = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, sourceAnchor: connectDrag.sourceAnchor, targetAnchor, routing: "orthogonal", label, properties: {}, style: { ...defaultRelationshipStyle } };
+        const validation = validateRelationshipCompatibility(candidate, state.diagram.elements.map((node) => ({ id: node.id, kind: node.kind, name: node.name, semantic: node.properties ?? {} })));
+        if (validation.status === "invalid") bus.emit("toast", validation.diagnostics[0] ?? "Incompatible connection");
+        else {
+          mutate((next) => { next.relationships.push(candidate); state.selectedRelationshipId = candidate.id; state.selectedElementIds = []; });
+          activeRelationshipKind = null; activeRelationshipLabel = null;
+        }
       }
       connectDrag = null; render(); return;
     }
@@ -672,7 +995,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (completedGesture.changed && completedGesture.diagramBefore) {
       const completed = structuredClone(state.diagram);
       state.diagram = completedGesture.diagramBefore;
-      gesture = null;
+      gesture = null; snapGuides = [];
       setDiagram(completed);
       return;
     }
@@ -703,8 +1026,17 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (modifier && key === "d") { event.preventDefault(); executeCommand("duplicate"); }
     if (modifier && key === "v") duplicateSelection();
     if (modifier && key === "g") { event.preventDefault(); executeCommand(event.shiftKey ? "ungroup" : "group"); }
+    if (modifier && key === "f") { event.preventDefault(); searchOpen = true; shortcutHelpOpen = false; render(); }
+    if (modifier && key === "0") { event.preventDefault(); executeCommand("fit-diagram"); }
+    if (modifier && key === "1") { event.preventDefault(); executeCommand("fit-selection"); }
+    if (event.altKey && !modifier && ["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
+      event.preventDefault();
+      const command = { arrowleft: "align-left", arrowright: "align-right", arrowup: "align-top", arrowdown: "align-bottom" }[key];
+      executeCommand(command);
+    }
+    if (key === "?") { event.preventDefault(); shortcutHelpOpen = !shortcutHelpOpen; searchOpen = false; render(); }
     if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
-    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; activeRelationshipKind = null; activeRelationshipLabel = null; render(); }
+    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; activeRelationshipKind = null; activeRelationshipLabel = null; searchOpen = false; shortcutHelpOpen = false; printPreviewOpen = false; render(); }
   });
   window.addEventListener("keyup", (event) => { if (event.code === "Space") spaceHeld = false; });
 
@@ -743,5 +1075,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const relationship = state.diagram?.relationships.find((item) => (item.model_relationship_id ?? item.id) === relationshipId);
     if (relationship) setSelection([], relationship.id);
   });
+  bus.on("collaboration:changed", (next) => { collaboration = next ?? { presence: [], comments: [] }; render(); });
   render();
 });

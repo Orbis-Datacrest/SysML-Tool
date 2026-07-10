@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyElementStyle, expandGroupedSelection, groupElements, moveSelection, nodesInRect, removeElements, reorderElements, ungroupElements } from "../src/canvas-model.js";
+import { alignElements, applyElementStyle, autoLayoutElements, distributeElements, expandGroupedSelection, groupElements, moveSelection, nodesInRect, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -57,4 +57,26 @@ test("shared styling applies to every selected element", () => {
   assert.equal(elements[0].style.fillColor, "#336699");
   assert.equal(elements[1].style.fillColor, "#336699");
   assert.equal(elements[2].style, undefined);
+});
+
+test("alignment and distribution edit multi-selection geometry", () => {
+  const elements = [node("a", 10, 10), node("b", 140, 40), node("c", 300, 80)];
+  alignElements(elements, ["a", "b", "c"], "top");
+  assert.deepEqual(elements.map((item) => item.y), [10, 10, 10]);
+  distributeElements(elements, ["a", "b", "c"], "horizontal");
+  assert.deepEqual(elements.map((item) => item.x), [10, 155, 300]);
+});
+
+test("auto-layout places selected elements on a bounded grid", () => {
+  const elements = [node("a", 10, 10), node("b", 10, 10), node("c", 10, 10), node("d", 10, 10)];
+  autoLayoutElements(elements, ["a", "b", "c", "d"], { width: 500, height: 500 }, 20);
+  assert.equal(new Set(elements.map((item) => `${item.x},${item.y}`)).size, 4);
+  assert.equal(elements.every((item) => item.x % 20 === 0 && item.y % 20 === 0), true);
+});
+
+test("smart guides report nearby alignment lines", () => {
+  const elements = [node("a", 10, 10), node("b", 200, 10)];
+  const guides = snapLinesForMove(elements, ["a"], { left: 198, right: 298, top: 12, bottom: 72 });
+  assert.equal(guides.some((guide) => guide.axis === "x" && guide.value === 200), true);
+  assert.equal(guides.some((guide) => guide.axis === "y" && guide.value === 10), true);
 });

@@ -33,7 +33,7 @@ registerMfe("project-explorer", (element, { state, bus, setDiagram }) => {
 
   function render() {
     const issues = diagnostics();
-    element.innerHTML = `<div class="panel diagram-type-panel"><h2>Diagram Type</h2><select id="diagram-type" aria-label="Diagram type">${diagramOptions()}</select></div>
+    element.innerHTML = `<div class="panel diagram-type-panel"><h2>Diagram</h2><select id="diagram-type" aria-label="Diagram type">${diagramOptions()}</select></div>
       <div class="panel validation-panel"><div class="validation-heading"><h2>Validation</h2><span class="validation-count ${issues.length ? "has-errors" : ""}">${issues.length}</span></div>
         <select id="severity-filter" aria-label="Filter validation severity"><option value="all">All severities</option>${["error", "warning", "info"].map((severity) => `<option value="${severity}" ${severityFilter === severity ? "selected" : ""}>${severity}</option>`).join("")}</select>
         <div class="validation-list">${issues.map((diagnostic) => `<button class="validation-item ${diagnostic.severity}" data-diagnostic-id="${escapeHtml(diagnostic.affectedElement.id)}" data-diagnostic-type="${diagnostic.affectedElement.type}"><span class="severity-dot"></span><span><strong>${escapeHtml(diagnostic.message)}</strong><small>${escapeHtml(diagnostic.suggestedFix)}</small></span></button>`).join("") || `<p class="validation-clean">✓ No model issues found</p>`}</div>

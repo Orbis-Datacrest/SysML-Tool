@@ -12,7 +12,13 @@ export const commonElements = [
 
 const definitions = [
   ["UML", "Structural", "uml-class", "Class Diagram", [
-    node("class", "Class"), node("interface", "Interface"), relationship("generalization", "Generalization"),
+    node("class", "Class"), node("compact-class", "Class 2"), node("interface-class", "Interface Class"),
+    node("interface", "Interface"), node("template-class", "Template Class"), node("component", "Component"),
+    node("nary-association", "N-ary Association"), node("object", "Object 1"), node("object-compact", "Object 2"),
+    node("divider-vertical", "Divider (Vertical)"), node("self-association", "Self Association"),
+    node("frame-fragment", "Frame / Fragment"), node("callout", "Callout"), node("text-label", "Text Label"),
+    node("symbol-braces", "Symbol { }"), node("symbol-guillemets", "Symbol << >>"),
+    relationship("generalization", "Generalization"),
     relationship("association", "Association"), relationship("aggregation", "Aggregation"), relationship("composition", "Composition")
   ]],
   ["UML", "Structural", "uml-object", "Object Diagram", [
@@ -55,10 +61,10 @@ const definitions = [
   ]],
   ["UML", "Behavioral", "uml-interaction-overview", "Interaction Overview Diagram", [node("interaction-use", "Interaction Use")]],
   ["SysML", "Structural", "sysml-bdd", "Block Definition Diagram (BDD)", [
-    node("block", "Block"), node("value-type", "Value Type"), node("constraint-block", "Constraint Block"), node("unit", "Unit"), node("quantity-kind", "Quantity Kind")
+    node("block", "Block"), node("interface-block", "Interface Block"), node("value-type", "Value Type"), node("constraint-block", "Constraint Block"), node("unit", "Unit"), node("quantity-kind", "Quantity Kind")
   ]],
   ["SysML", "Structural", "sysml-ibd", "Internal Block Diagram (IBD)", [
-    node("part-property", "Part Property"), node("reference-property", "Reference Property"), node("proxy-port", "Proxy Port"), node("full-port", "Full Port"), relationship("item-flow", "Item Flow")
+    node("part-property", "Part Property"), node("reference-property", "Reference Property"), node("proxy-port", "Proxy Port"), node("full-port", "Full Port"), relationship("connector", "Connector"), relationship("item-flow", "Item Flow")
   ]],
   ["SysML", "Structural", "sysml-package", "Package Diagram (PKG)", [node("view", "View"), node("viewpoint", "Viewpoint")]],
   ["SysML", "Structural", "sysml-parametric", "Parametric Diagram (PMR)", [
