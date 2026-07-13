@@ -14,6 +14,23 @@ function diagramOptions() {
 }
 
 registerMfe("project-explorer", (element, { state, bus, setDiagram }) => {
+  function render() {
+    element.innerHTML = `<div class="panel diagram-type-panel"><h2>Diagram</h2><select id="diagram-type" aria-label="Diagram type">${diagramOptions()}</select></div>`;
+    const diagramType = element.querySelector("#diagram-type");
+    diagramType.value = state.diagram?.type ?? "uml-class";
+    diagramType.addEventListener("change", () => {
+      if (!state.diagram || state.diagram.type === diagramType.value) return;
+      state.selectedElementIds = [];
+      state.selectedRelationshipId = null;
+      setDiagram({ ...structuredClone(state.diagram), type: diagramType.value });
+    });
+  }
+
+  bus.on("diagram:changed", render);
+  render();
+});
+
+registerMfe("project-validation", (element, { state, bus }) => {
   let severityFilter = "all";
   const diagramElementIds = () => new Set((state.diagrams ?? []).flatMap((diagram) => (diagram.elements ?? []).map((item) => item.model_element_id ?? item.id)));
   const diagnostics = () => validateModel(state.modelRepository ?? { elements: [], relationships: [] }, { diagramElementIds: diagramElementIds() })
@@ -33,19 +50,10 @@ registerMfe("project-explorer", (element, { state, bus, setDiagram }) => {
 
   function render() {
     const issues = diagnostics();
-    element.innerHTML = `<div class="panel diagram-type-panel"><h2>Diagram</h2><select id="diagram-type" aria-label="Diagram type">${diagramOptions()}</select></div>
-      <div class="panel validation-panel"><div class="validation-heading"><h2>Validation</h2><span class="validation-count ${issues.length ? "has-errors" : ""}">${issues.length}</span></div>
-        <select id="severity-filter" aria-label="Filter validation severity"><option value="all">All severities</option>${["error", "warning", "info"].map((severity) => `<option value="${severity}" ${severityFilter === severity ? "selected" : ""}>${severity}</option>`).join("")}</select>
-        <div class="validation-list">${issues.map((diagnostic) => `<button class="validation-item ${diagnostic.severity}" data-diagnostic-id="${escapeHtml(diagnostic.affectedElement.id)}" data-diagnostic-type="${diagnostic.affectedElement.type}"><span class="severity-dot"></span><span><strong>${escapeHtml(diagnostic.message)}</strong><small>${escapeHtml(diagnostic.suggestedFix)}</small></span></button>`).join("") || `<p class="validation-clean">✓ No model issues found</p>`}</div>
-      </div>`;
-    const diagramType = element.querySelector("#diagram-type");
-    diagramType.value = state.diagram?.type ?? "uml-class";
-    diagramType.addEventListener("change", () => {
-      if (!state.diagram || state.diagram.type === diagramType.value) return;
-      state.selectedElementIds = [];
-      state.selectedRelationshipId = null;
-      setDiagram({ ...structuredClone(state.diagram), type: diagramType.value });
-    });
+    element.innerHTML = `<div class="panel validation-panel"><div class="validation-heading"><h2>Validation</h2><span class="validation-count ${issues.length ? "has-errors" : ""}">${issues.length}</span></div>
+      <select id="severity-filter" aria-label="Filter validation severity"><option value="all">All severities</option>${["error", "warning", "info"].map((severity) => `<option value="${severity}" ${severityFilter === severity ? "selected" : ""}>${severity}</option>`).join("")}</select>
+      <div class="validation-list">${issues.map((diagnostic) => `<button class="validation-item ${diagnostic.severity}" data-diagnostic-id="${escapeHtml(diagnostic.affectedElement.id)}" data-diagnostic-type="${diagnostic.affectedElement.type}"><span class="severity-dot"></span><span><strong>${escapeHtml(diagnostic.message)}</strong><small>${escapeHtml(diagnostic.suggestedFix)}</small></span></button>`).join("") || `<p class="validation-clean">✓ No model issues found</p>`}</div>
+    </div>`;
     element.querySelector("#severity-filter").addEventListener("change", (event) => { severityFilter = event.target.value; render(); });
     element.querySelectorAll("[data-diagnostic-id]").forEach((button) => button.addEventListener("click", () => focusDiagnostic(button.dataset.diagnosticId, button.dataset.diagnosticType)));
   }

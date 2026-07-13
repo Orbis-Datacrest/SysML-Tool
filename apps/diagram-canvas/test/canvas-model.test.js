@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { alignElements, applyElementStyle, autoLayoutElements, distributeElements, expandGroupedSelection, groupElements, moveSelection, nodesInRect, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
+import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -79,4 +79,16 @@ test("smart guides report nearby alignment lines", () => {
   const guides = snapLinesForMove(elements, ["a"], { left: 198, right: 298, top: 12, bottom: 72 });
   assert.equal(guides.some((guide) => guide.axis === "x" && guide.value === 200), true);
   assert.equal(guides.some((guide) => guide.axis === "y" && guide.value === 10), true);
+});
+
+test("minimap viewport and drag positions stay synchronized with canvas zoom and scroll", () => {
+  const view = minimapViewport({ canvas: { width: 8000, height: 6000 }, viewport: { width: 1000, height: 750 }, minimap: { width: 160, height: 120 }, scroll: { left: 2000, top: 1500 }, zoom: 1 });
+  assert.deepEqual(view, { left: 40, top: 30, width: 20, height: 15 });
+  assert.deepEqual(canvasScrollFromMinimap({ canvas: { width: 8000, height: 6000 }, minimap: { width: 160, height: 120 }, viewport: { width: 20, height: 15 }, position: { left: 40, top: 30 }, zoom: 1 }), { left: 2000, top: 1500 });
+});
+
+test("colors are normalized for native pickers and invalid values use a safe fallback", () => {
+  assert.equal(normalizeColor("#3af"), "#33aaff");
+  assert.equal(normalizeColor("rgb(300, 16, -2)"), "#ff1000");
+  assert.equal(normalizeColor("transparent", "#123456"), "#123456");
 });

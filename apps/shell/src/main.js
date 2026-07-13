@@ -21,12 +21,18 @@ applyTheme(state.settings.theme);
 // Dismiss sharing without re-rendering it, so an unsent email/role draft remains intact.
 document.addEventListener("pointerdown", (event) => {
   const popover = document.querySelector("#share-popover");
-  if (popover && !popover.hidden && !event.target.closest(".share-control")) popover.hidden = true;
+  if (popover && !popover.hidden && !event.target.closest(".share-control")) {
+    popover.hidden = true;
+    document.querySelector("#share-project")?.setAttribute("aria-expanded", "false");
+  }
 }, true);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     const popover = document.querySelector("#share-popover");
-    if (popover && !popover.hidden) popover.hidden = true;
+    if (popover && !popover.hidden) {
+      popover.hidden = true;
+      document.querySelector("#share-project")?.setAttribute("aria-expanded", "false");
+    }
   }
 });
 
@@ -49,6 +55,7 @@ const synchronization = createSynchronizationService({ api, state, bus });
 function setDiagram(diagram, recordHistory = true) {
   if (state.diagram && recordHistory) state.history.push(structuredClone(state.diagram));
   state.diagram = diagram;
+  state.selectedHistoryVersion = "current";
   state.future = [];
   bus.emit("diagram:changed", diagram);
   scheduleAutoSave();
@@ -126,11 +133,6 @@ async function loadVersionHistory() {
   if (!state.project?.id) return;
   const result = await api.request(`/api/projects/${state.project.id}/versions`);
   state.versionHistory = result.versions ?? [];
-  state.baselines = result.baselines ?? [];
-  const history = await api.request(`/api/projects/${state.project.id}/history`);
-  state.auditHistory = history.audit ?? [];
-  const reviews = await api.listReviews(state.project.id);
-  state.reviews = reviews.reviews ?? [];
 }
 
 bus.on("history:undo", () => {
@@ -159,7 +161,6 @@ function updateWorkspaceTitle() {
 
 function showDashboard({ updateHistory = true, replaceHistory = false } = {}) {
   state.view = "dashboard";
-  state.historyOpen = false;
   synchronization.stop();
   rememberPage("dashboard");
   if (updateHistory) {
@@ -175,6 +176,7 @@ function undoDiagram() {
   state.future.push(structuredClone(state.diagram));
   state.diagram = previous;
   bus.emit("diagram:changed", state.diagram);
+  scheduleAutoSave();
 }
 
 function redoDiagram() {
@@ -183,6 +185,7 @@ function redoDiagram() {
   state.history.push(structuredClone(state.diagram));
   state.diagram = next;
   bus.emit("diagram:changed", state.diagram);
+  scheduleAutoSave();
 }
 
 const renderShell = createShellRenderer({
@@ -210,8 +213,10 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   state.modelRepository = repositoryFromDiagrams(state.diagrams);
   state.selectedElementIds = [];
   state.selectedRelationshipId = null;
+  state.canvasViewport = { zoom: 1, scrollLeft: 0, scrollTop: 0 };
   state.history = [];
   state.future = [];
+  state.selectedHistoryVersion = "current";
   state.view = "editor";
   rememberPage("editor", projectId);
   if (updateHistory) window.history.pushState({ view: "editor", projectId }, "", projectUrl(projectId));
@@ -313,10 +318,6 @@ bus.on("dashboard:open", () => {
 bus.on("selection:changed", (selection) => synchronization.publishPresence(null, selection));
 bus.on("canvas:pointer", (cursor) => synchronization.publishPresence(cursor, state.selectedElementIds ?? []));
 bus.on("comment:create", (comment) => synchronization.addComment(comment).catch((error) => bus.emit("toast", error.message)));
-bus.on("collaboration:changed", () => {
-  if (state.historyOpen) renderShell();
-});
-
 window.addEventListener("popstate", async (event) => {
   if (event.state?.view === "editor" && event.state.projectId) {
     await openProject(event.state.projectId, { updateHistory: false });

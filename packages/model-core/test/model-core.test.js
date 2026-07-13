@@ -71,7 +71,7 @@ test("validates the interactive canvas relationship variants", () => {
 
 test("decomposes model semantics from diagram layout and hydrates a compatible canvas view", () => {
   const diagram = { id: "d1", tenant_id: "t1", project_id: "p1", type: "sysml-bdd", metadata: { grid: 20 }, elements: [
-    { id: "b1", kind: "block", name: "Vehicle", x: 40, y: 60, width: 200, height: 140, style: { fillColor: "#fff" }, properties: { parts: ["engine: Engine"], operations: ["start()"] } }
+    { id: "b1", kind: "block", name: "Vehicle", x: 40, y: 60, width: 200, height: 140, style: { fillColor: "#ffcc00", borderColor: "#123456", textColor: "#654321" }, properties: { parts: ["engine: Engine"], operations: ["start()"] } }
   ], relationships: [] };
   const decomposed = decomposeDiagram(diagram);
   assert.deepEqual(decomposed.elements[0].semantic.parts, ["engine: Engine"]);
@@ -81,6 +81,7 @@ test("decomposes model semantics from diagram layout and hydrates a compatible c
   const hydrated = hydrateDiagram(diagram, { elements: decomposed.elements, relationships: [] }, decomposed.view);
   assert.equal(hydrated.elements[0].name, "Vehicle");
   assert.equal(hydrated.elements[0].x, 40);
+  assert.deepEqual(hydrated.elements[0].style, { fillColor: "#ffcc00", borderColor: "#123456", textColor: "#654321" });
 });
 
 test("legacy project migration reuses one model element across diagram views", () => {

@@ -6,7 +6,7 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (character)
 export function createNodeRenderer({ getEditingNode }) {
   function sectionEditor(node, section, value, label, displayClass = "") {
     const tag = section === "name" ? "span" : "div";
-    return `<${tag} class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" contenteditable="plaintext-only" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" role="textbox" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</${tag}>`;
+    return `<${tag} class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" contenteditable="plaintext-only" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" role="textbox" aria-multiline="true" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</${tag}>`;
   }
 
   function editableText(node, section, value, className, label) {

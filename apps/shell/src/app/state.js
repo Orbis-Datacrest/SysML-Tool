@@ -1,3 +1,5 @@
+import { createSidebarLayout } from "./sidebarLayout.js";
+
 export function createInitialState(storage = localStorage, media = window.matchMedia.bind(window)) {
   return {
     tenantId: "tenant_demo",
@@ -5,9 +7,9 @@ export function createInitialState(storage = localStorage, media = window.matchM
     refreshToken: storage.getItem("sysml.refreshToken") ?? "",
     user: null,
     view: "dashboard",
-    mobilePanel: null,
-    sidebarOpen: media("(min-width: 768px)").matches,
-    historyOpen: false,
+    sidebarLayout: createSidebarLayout(storage, media("(min-width: 768px)").matches),
+    rightPanel: "advisor",
+    selectedHistoryVersion: "current",
     settingsOpen: false,
     versionHistory: [],
     baselines: [],
@@ -22,6 +24,7 @@ export function createInitialState(storage = localStorage, media = window.matchM
     modelRepository: { schema_version: 2, elements: [], relationships: [] },
     selectedElementIds: [],
     selectedRelationshipId: null,
+    canvasViewport: { zoom: 1, scrollLeft: 0, scrollTop: 0 },
     relationshipKind: "association",
     saveStatus: "",
     shareDraft: { email: "", role: "Viewer" },

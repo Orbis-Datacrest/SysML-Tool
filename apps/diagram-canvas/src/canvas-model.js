@@ -180,3 +180,34 @@ export function reorderElements(elements, selectedIds, direction) {
     }
   }
 }
+
+export function minimapViewport({ canvas, viewport, minimap, scroll, zoom }) {
+  const scaleX = minimap.width / canvas.width;
+  const scaleY = minimap.height / canvas.height;
+  const width = Math.min(minimap.width, viewport.width / zoom * scaleX);
+  const height = Math.min(minimap.height, viewport.height / zoom * scaleY);
+  return {
+    left: clamp(scroll.left / zoom * scaleX, 0, minimap.width - width),
+    top: clamp(scroll.top / zoom * scaleY, 0, minimap.height - height),
+    width,
+    height
+  };
+}
+
+export function canvasScrollFromMinimap({ canvas, minimap, viewport, position, zoom }) {
+  return {
+    left: clamp(position.left, 0, minimap.width - viewport.width) / minimap.width * canvas.width * zoom,
+    top: clamp(position.top, 0, minimap.height - viewport.height) / minimap.height * canvas.height * zoom
+  };
+}
+
+export function normalizeColor(value, fallback = "#000000") {
+  const candidate = String(value ?? "").trim().toLowerCase();
+  const shortHex = candidate.match(/^#([0-9a-f]{3,4})$/i);
+  if (shortHex) return `#${shortHex[1].slice(0, 3).split("").map((part) => part + part).join("")}`;
+  const longHex = candidate.match(/^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i);
+  if (longHex) return `#${longHex[1]}`;
+  const rgb = candidate.match(/^rgba?\(\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/i);
+  if (rgb) return `#${rgb.slice(1, 4).map((part) => Math.round(clamp(Number(part), 0, 255)).toString(16).padStart(2, "0")).join("")}`;
+  return normalizeColor(fallback === value ? "#000000" : fallback, "#000000");
+}

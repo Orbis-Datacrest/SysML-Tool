@@ -18,7 +18,7 @@ async function pngBlob(diagram, scale = 2) {
   } finally { URL.revokeObjectURL(url); }
 }
 
-registerMfe("import-export", (element, { state, setDiagram }) => {
+registerMfe("import-export", (element, { state, bus, setDiagram }) => {
   let open = false; let status = "";
   async function runExport(format) {
     const base = filename(state.diagram?.name); status = `Creating ${format.toUpperCase()}…`; render();
@@ -52,10 +52,25 @@ registerMfe("import-export", (element, { state, setDiagram }) => {
         ${[["svg", "SVG", "Editable vector"], ["png", "PNG", "2× raster image"], ["pdf", "PDF", "Vector document"], ["plantuml", "PUML", "PlantUML source"], ["json", "JSON", "Lossless project data"], ["csv", "CSV", "Requirements table"], ["xlsx", "XLSX", "Excel requirements"]].map(([id, label, detail]) => `<button data-export="${id}" role="menuitem"><span class="export-format">${label}</span><span>${detail}</span></button>`).join("")}
         ${status ? `<output class="export-status">${status}</output>` : ""}
       </div>` : ""}`;
-    element.querySelector("#export-toggle").addEventListener("click", (event) => { event.stopPropagation(); open = !open; render(); });
+    element.querySelector("#export-toggle").addEventListener("click", (event) => {
+      event.stopPropagation();
+      const opening = !open;
+      if (opening) bus.emit("ui:menu-open", "export");
+      open = opening;
+      render();
+    });
     element.querySelectorAll("[data-export]").forEach((button) => button.addEventListener("click", () => runExport(button.dataset.export)));
     element.querySelector("[data-import]")?.addEventListener("change", (event) => event.target.files[0] && importFile(event.target.files[0]));
   }
-  document.addEventListener("pointerdown", (event) => { if (open && !element.contains(event.target)) { open = false; render(); } }, true);
+  const closeOnOutsidePointer = (event) => { if (open && !element.contains(event.target)) { open = false; render(); } };
+  const closeOnEscape = (event) => { if (open && event.key === "Escape") { open = false; render(); } };
+  const stopMenuSync = bus.on("ui:menu-open", (menu) => { if (open && menu !== "export") { open = false; render(); } });
+  document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+  document.addEventListener("keydown", closeOnEscape);
   render();
+  return () => {
+    document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.removeEventListener("keydown", closeOnEscape);
+    stopMenuSync();
+  };
 });
