@@ -1,4 +1,7 @@
 .workspace { --left-sidebar-width: 36px; --right-sidebar-width: 36px; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, var(--left-sidebar-width)) minmax(0, 1fr) minmax(0, var(--right-sidebar-width)); overflow: hidden; isolation: isolate; }
+.workspace > .left-rail { grid-column: 1; }
+.workspace > .canvas-host { grid-column: 2; }
+.workspace > .right-rail { grid-column: 3; }
 .dashboard-host { min-width: 0; min-height: 0; overflow: auto; background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent), transparent 88%), transparent 34%), var(--bg); }
 .app-boot { display: grid; min-height: 100vh; place-content: center; justify-items: center; gap: 14px; background: var(--bg); color: var(--muted); font-size: 13px; }
 .boot-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-bright)); color: var(--ink-on-brand); font-size: 22px; font-weight: 900; box-shadow: 0 12px 34px var(--shadow-color); }

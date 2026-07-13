@@ -13,6 +13,9 @@ import "/apps/import-export/src/index.js";
 import "/apps/auth-tenant-settings/src/index.js";
 
 const state = createInitialState();
+const storageGet = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
+const storageSet = (key, value) => { try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable in private/embedded contexts. */ } };
+const storageRemove = (key) => { try { localStorage.removeItem(key); } catch { /* Nothing else to clear locally. */ } };
 
 const bus = createEventBus();
 let autoSaveTimer = null;
@@ -54,12 +57,21 @@ function rememberPage(view, projectId = state.project?.id) {
 const api = createApiClient({ state, bus });
 const synchronization = createSynchronizationService({ api, state, bus });
 
-function setDiagram(diagram, recordHistory = true) {
-  if (state.diagram && recordHistory) state.history.push(structuredClone(state.diagram));
+function setDiagram(diagram, recordHistory = true, historySnapshot = null) {
+  if (state.diagram && recordHistory) state.history.push(structuredClone(historySnapshot ?? state.diagram));
   state.diagram = diagram;
   state.selectedHistoryVersion = "current";
   state.future = [];
   bus.emit("diagram:changed", diagram);
+  scheduleAutoSave();
+}
+
+// Text editors update their draft without forcing the canvas subtree to rerender.
+// The final blur commit supplies the pre-edit snapshot and creates one undo entry.
+function updateDiagramDraft(diagram) {
+  state.diagram = diagram;
+  state.selectedHistoryVersion = "current";
+  state.future = [];
   scheduleAutoSave();
 }
 
@@ -108,7 +120,7 @@ function scheduleAutoSave() {
   if (state.view !== "editor" || !state.diagram?.id) return;
   clearTimeout(autoSaveTimer);
   updateSaveStatus("Unsaved");
-  autoSaveTimer = setTimeout(() => saveCurrentDiagram({ snapshot: false }), 800);
+  autoSaveTimer = setTimeout(() => saveCurrentDiagram({ snapshot: false }), 300);
 }
 
 async function saveCurrentDiagram({ snapshot = false } = {}) {
@@ -192,7 +204,7 @@ function redoDiagram() {
 
 const renderShell = createShellRenderer({
   api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
-  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram
+  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 });
 
 async function loadWorkspace() {
@@ -208,6 +220,7 @@ async function loadWorkspace() {
 }
 
 async function openProject(projectId, { updateHistory = true } = {}) {
+  if (!state.user || !state.authToken) throw new Error("Log in before opening a project.");
   const data = await api.request(`/api/projects/${projectId}/open`, { method: "POST" });
   state.project = data.project;
   state.diagrams = data.diagrams ?? [];
@@ -234,40 +247,44 @@ async function openProject(projectId, { updateHistory = true } = {}) {
 async function boot() {
   document.querySelector("#app").innerHTML = `<main class="app-boot" aria-label="Restoring workspace"><span class="boot-mark">S</span><span>Restoring workspace…</span></main>`;
   if (state.authToken) {
-    const session = await api.request("/api/auth/me");
-    state.user = session.user;
-    if (!state.user && state.refreshToken) {
-      const refreshed = await api.request("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) });
-      state.authToken = refreshed.token;
-      state.refreshToken = refreshed.refreshToken;
-      state.user = refreshed.user;
-      localStorage.setItem("sysml.authToken", refreshed.token);
-      localStorage.setItem("sysml.refreshToken", refreshed.refreshToken);
-    }
-    if (state.user) state.tenantId = state.user.tenant_id;
-    if (state.user) {
-      const result = await api.request("/api/settings");
-      state.settings = result.settings;
-      applyTheme(state.settings.theme);
+    try {
+      const session = await api.request("/api/auth/me");
+      state.user = session.user;
+      if (!state.user && state.refreshToken) {
+        const refreshed = await api.request("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) });
+        state.authToken = refreshed.token;
+        state.refreshToken = refreshed.refreshToken;
+        state.user = refreshed.user;
+        storageSet("sysml.authToken", refreshed.token);
+        storageSet("sysml.refreshToken", refreshed.refreshToken);
+      }
+      if (state.user) state.tenantId = state.user.tenant_id;
+      if (state.user) {
+        const result = await api.request("/api/settings");
+        state.settings = result.settings;
+        applyTheme(state.settings.theme);
+      }
+    } catch {
+      state.user = null;
     }
     if (!state.user) {
       state.authToken = "";
       state.refreshToken = "";
-      localStorage.removeItem("sysml.authToken");
-      localStorage.removeItem("sysml.refreshToken");
+      storageRemove("sysml.authToken");
+      storageRemove("sysml.refreshToken");
     }
     bus.emit("auth:changed", state.user);
   }
   const routeProjectId = new URL(window.location.href).searchParams.get("project");
-  const rememberedView = routeProjectId ? "editor" : localStorage.getItem("sysml.activeView");
-  const rememberedProjectId = routeProjectId ?? localStorage.getItem("sysml.activeProjectId");
-  if (rememberedView === "editor" && rememberedProjectId) {
+  const rememberedView = routeProjectId ? "editor" : storageGet("sysml.activeView");
+  const rememberedProjectId = routeProjectId ?? storageGet("sysml.activeProjectId");
+  if (state.user && rememberedView === "editor" && rememberedProjectId) {
     try {
       await openProject(rememberedProjectId, { updateHistory: false });
       window.history.replaceState({ view: "editor", projectId: rememberedProjectId }, "", projectUrl(rememberedProjectId));
       return;
     } catch {
-      localStorage.removeItem("sysml.activeProjectId");
+      storageRemove("sysml.activeProjectId");
     }
   }
   state.view = "dashboard";
@@ -281,8 +298,8 @@ bus.on("auth:login", async ({ token, refreshToken, user }) => {
   state.refreshToken = refreshToken ?? "";
   state.user = user;
   state.tenantId = user.tenant_id;
-  localStorage.setItem("sysml.authToken", token);
-  if (refreshToken) localStorage.setItem("sysml.refreshToken", refreshToken);
+  storageSet("sysml.authToken", token);
+  if (refreshToken) storageSet("sysml.refreshToken", refreshToken);
   const result = await api.request("/api/settings");
   state.settings = result.settings;
   applyTheme(state.settings.theme);
@@ -293,20 +310,25 @@ bus.on("auth:login", async ({ token, refreshToken, user }) => {
 });
 
 bus.on("auth:logout", async () => {
-  if (state.authToken) await api.request("/api/auth/logout", { method: "POST" });
+  try { if (state.authToken) await api.request("/api/auth/logout", { method: "POST" }); } catch { /* Local protected state must still be cleared. */ }
+  synchronization.stop();
   state.authToken = "";
   state.refreshToken = "";
   state.user = null;
   state.tenantId = "tenant_demo";
-  localStorage.removeItem("sysml.authToken");
-  localStorage.removeItem("sysml.refreshToken");
+  storageRemove("sysml.authToken");
+  storageRemove("sysml.refreshToken");
+  storageRemove("sysml.activeProjectId");
   state.view = "dashboard";
   rememberPage("dashboard");
   state.project = null;
   state.diagram = null;
   state.diagrams = [];
+  state.modelRepository = { schema_version: 2, elements: [], relationships: [] };
+  resetEditorInteractionState(state);
   bus.emit("auth:changed", null);
   renderShell();
+  window.history.replaceState({ view: "dashboard" }, "", dashboardUrl());
 });
 
 bus.on("project:open", (projectId) => openProject(projectId).catch((error) => bus.emit("toast", `Could not open project: ${error.message}`)));
@@ -318,7 +340,8 @@ bus.on("canvas:pointer", (cursor) => synchronization.publishPresence(cursor, sta
 bus.on("comment:create", (comment) => synchronization.addComment(comment).catch((error) => bus.emit("toast", error.message)));
 window.addEventListener("popstate", async (event) => {
   if (event.state?.view === "editor" && event.state.projectId) {
-    await openProject(event.state.projectId, { updateHistory: false });
+    if (state.user) await openProject(event.state.projectId, { updateHistory: false });
+    else showDashboard({ updateHistory: false });
     return;
   }
   showDashboard({ updateHistory: false });

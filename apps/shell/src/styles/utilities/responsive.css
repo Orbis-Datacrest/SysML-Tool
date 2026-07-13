@@ -29,8 +29,9 @@
   .export-menu { position: fixed; top: var(--topbar-height); right: 8px; width: min(280px, calc(100vw - 16px)); max-height: calc(100vh - var(--topbar-height) - 8px); max-height: calc(100dvh - var(--topbar-height) - 8px); overflow: auto; }
   .share-button { width: 44px; height: 44px; justify-content: center; padding: 0; border-radius: 50%; }
   .top-project-name { min-width: 0; max-width: min(30vw, 180px); padding: 4px 6px; border-style: solid; font-size: 12px; }
-  .canvas-toolbar { top: 8px; left: 8px; width: calc(100% - 16px); min-width: 0; max-width: calc(100% - 16px); gap: 4px; padding: 4px 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; transform: none; }
+  .canvas-toolbar { top: 8px; left: 8px; width: max-content; min-width: 0; max-width: calc(100% - 16px); gap: 4px; padding: 4px 6px; overflow: hidden; transform: none; }
   .canvas-toolbar button, .canvas-toolbar select { min-width: 0; height: 28px; min-height: 28px; padding: 0 4px; font-size: 10px; }
+  .canvas-toolbar #fit-selection, .canvas-toolbar #select-all, .canvas-toolbar #grid-size { display: none; }
   .format-toolbar, .relationship-toolbar { right: 8px; left: 8px !important; max-width: calc(100vw - 16px); max-height: calc(100vh - var(--topbar-height) - 16px); overflow: auto; white-space: normal; }
   .share-popover { position: fixed; top: var(--topbar-height); right: 8px; left: 8px; width: auto; max-height: calc(100vh - var(--topbar-height) - 8px); max-height: calc(100dvh - var(--topbar-height) - 8px); overflow: auto; }
   .dashboard-shell { width: min(100% - 24px, 1120px); padding: 18px 0 32px; }

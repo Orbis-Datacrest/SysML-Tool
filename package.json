@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "node services/dev-server/src/index.js",
+    "dev": "node --watch services/dev-server/src/index.js",
     "build": "node scripts/build.mjs",
     "test": "node --test",
     "start": "node services/dev-server/src/index.js",

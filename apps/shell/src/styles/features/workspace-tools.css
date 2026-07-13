@@ -73,12 +73,17 @@
 .project-title-editor { border-color: var(--accent-2); background: var(--surface-input); outline: 3px solid var(--focus-ring); }
 .project-description { margin: 2px 9px 0; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .diagram-type-panel { padding-top: 16px; padding-bottom: 16px; }
-.validation-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.validation-heading h2 { margin: 0; }
-.validation-heading > span { min-width: 24px; padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--line), transparent 20%); border-radius: 999px; background: var(--panel-3); color: var(--muted); font-size: 10px; font-weight: 850; text-align: center; }
+.validation-heading { width: 100%; min-height: 36px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; }
+.validation-heading:hover { border-color: transparent; background: var(--surface-control-hover); }
+.validation-disclosure { color: var(--muted); font-size: 12px; text-align: center; }
+.validation-title { font-size: 11px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.validation-count { min-width: 24px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-3); color: var(--muted); font-size: 10px; font-weight: 850; text-align: center; }
 .validation-panel select { min-width: 0; padding: 7px 8px; font-size: 11px; }
-.validation-panel { padding-bottom: 16px; border-top: 1px solid var(--line); background: var(--panel); }
-.validation-panel > select { margin-top: 10px; }
+.validation-panel { padding: 5px; border-top: 1px solid var(--line); background: var(--panel); }
+.validation-content { display: grid; grid-template-rows: 1fr; max-height: 340px; opacity: 1; visibility: visible; transition: grid-template-rows 160ms ease, max-height 160ms ease, opacity 120ms ease; }
+.validation-content-inner { min-height: 0; padding: 4px 5px 7px; overflow: hidden; }
+.validation-content-inner > select { margin-top: 3px; }
+.validation-panel.collapsed .validation-content { grid-template-rows: 0fr; max-height: 0; opacity: 0; visibility: hidden; }
 .validation-count.has-errors { background: var(--danger-surface); color: var(--danger-ink); }
 .validation-list { max-height: 260px; margin-top: 10px; overflow: auto; border: 1px solid color-mix(in srgb, var(--line), transparent 8%); border-radius: 8px; background: color-mix(in srgb, var(--panel-2), transparent 10%); }
 .validation-item { width: 100%; display: grid; grid-template-columns: 10px 1fr; gap: 9px; padding: 10px 9px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 14%); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }

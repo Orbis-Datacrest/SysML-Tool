@@ -1,4 +1,10 @@
 export function createApiClient({ state, bus, fetchImpl = fetch }) {
+  const persistSession = (token, refreshToken) => {
+    try {
+      localStorage.setItem("sysml.authToken", token);
+      localStorage.setItem("sysml.refreshToken", refreshToken);
+    } catch { /* Server-backed session remains valid when storage is unavailable. */ }
+  };
   const api = {
     request(path, options = {}) {
       return api.rawRequest(path, options, true);
@@ -14,8 +20,7 @@ export function createApiClient({ state, bus, fetchImpl = fetch }) {
         state.authToken = refreshed.token;
         state.refreshToken = refreshed.refreshToken;
         state.user = refreshed.user;
-        localStorage.setItem("sysml.authToken", refreshed.token);
-        localStorage.setItem("sysml.refreshToken", refreshed.refreshToken);
+        persistSession(refreshed.token, refreshed.refreshToken);
         bus.emit("auth:changed", state.user);
         return api.rawRequest(path, options, false);
       }

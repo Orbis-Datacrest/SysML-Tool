@@ -706,7 +706,9 @@ async function api(req, res, urlOrPath) {
   const pathname = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
   const searchParams = typeof urlOrPath === "string" ? new URLSearchParams() : urlOrPath.searchParams;
   if (pathname.startsWith("/api/auth/")) return handleAuthRoute(req, res, pathname);
-  const { user, tenantId } = authContext(req);
+  const protectedContext = requireUser(req, res);
+  if (!protectedContext) return;
+  const { user, tenantId } = protectedContext;
   if (pathname === "/api/bootstrap" && req.method === "GET") return send(res, 200, bootstrap(tenantId));
 
   if (pathname === "/api/settings" && req.method === "GET") {

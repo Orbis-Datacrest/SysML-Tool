@@ -2,7 +2,7 @@ import { registerMfe } from "../../../packages/ui/src/moduleRegistry.js";
 import { elementKinds, isPaletteItemAllowed, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import {
   MIN_NODE_HEIGHT, MIN_NODE_WIDTH, alignElements, autoLayoutElements, canvasScrollFromMinimap, clamp, distributeElements, expandGroupedSelection,
-  groupElements, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements,
+  groupElements, isColorInputValue, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements,
   minimapViewport, selectionBounds, snap, snapLinesForMove, ungroupElements
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
@@ -35,7 +35,52 @@ function insertPlainText(target, text) {
   selection.addRange(range);
 }
 
-registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram }) => {
+function placeCaretAtPoint(target, clientX, clientY) {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+    const end = target.value.length;
+    target.setSelectionRange(end, end);
+    return;
+  }
+  const selection = window.getSelection();
+  if (!selection) return;
+  let range = null;
+  if (typeof document.caretPositionFromPoint === "function") {
+    const position = document.caretPositionFromPoint(clientX, clientY);
+    if (position && target.contains(position.offsetNode)) {
+      range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+    }
+  } else if (typeof document.caretRangeFromPoint === "function") {
+    const candidate = document.caretRangeFromPoint(clientX, clientY);
+    if (candidate && target.contains(candidate.startContainer)) range = candidate;
+  }
+  if (!range) {
+    range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+const CUSTOM_COLOR_SWATCHES = ["#172033", "#FFFFFF", "#64748B", "#EF4444", "#F97316", "#FACC15", "#22C55E", "#14B8A6", "#3B82F6", "#6366F1", "#A855F7", "#EC4899"];
+
+function renderColorControl({ value, label, pickerKey, open = false, styleProperty = "", relationshipProperty = "" }) {
+  const color = normalizeColor(value);
+  const targetAttribute = styleProperty ? `data-style="${styleProperty}"` : `data-relationship-style="${relationshipProperty}"`;
+  return `<span class="color-control" data-color-control>
+    <button class="color-trigger" type="button" data-color-toggle="${pickerKey}" aria-label="Open ${escapeHtml(label)} picker" aria-expanded="${open}" title="Choose ${escapeHtml(label.toLowerCase())}"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="3" fill="${color}"></rect></svg></button>
+    <input class="color-fallback" ${targetAttribute} data-color-input="fallback" type="text" value="${color.toUpperCase()}" data-initial-color="${color}" inputmode="text" maxlength="7" pattern="#[0-9A-Fa-f]{6}" spellcheck="false" aria-label="${escapeHtml(label)} hex color" title="Enter a hex color such as #2D6EB3">
+    ${open ? `<div class="color-popover" role="dialog" aria-label="${escapeHtml(label)} color picker">
+      <div class="color-popover-heading"><strong>${escapeHtml(label)}</strong><span>Hover to preview · click to apply</span></div>
+      <div class="color-swatch-grid">${CUSTOM_COLOR_SWATCHES.map((swatch) => `<button type="button" class="color-swatch" data-color-choice="${swatch}" aria-label="Apply ${swatch}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" fill="${swatch}"></rect></svg></button>`).join("")}</div>
+      <label class="native-color-option">More colors <input class="color-native" ${targetAttribute} data-color-input="native" type="color" value="${color}" data-initial-color="${color}" aria-label="${escapeHtml(label)} system color picker"></label>
+    </div>` : ""}
+  </span>`;
+}
+
+registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft }) => {
   const lifecycle = new AbortController();
   const runtimeStyles = createScopedStyles(element, "diagram-canvas");
   const subscriptions = [];
@@ -49,6 +94,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let selectionFrame = null;
   let paletteHover = null;
   let editingNode = null;
+  let editingTimer = null;
+  let activeColorPicker = null;
   let pointerDrag = null;
   let minimapDrag = null;
   let renderFrame = null;
@@ -68,6 +115,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
+  const editorValue = (input) => "value" in input ? input.value : input.textContent;
 
   const scheduleRender = () => {
     if (renderFrame !== null) return;
@@ -140,17 +188,20 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       return Array.isArray(value) ? value : String(value).split(/\r?\n/);
     }).filter((section) => section.length && section.some((line) => String(line).length));
     const lines = [node.name, ...sections.flat()].flatMap((line) => String(line ?? "").split(/\r?\n/));
+    const fontSize = Number(nodeStyle(node).textSize) || 13;
+    const characterWidth = Math.max(6, fontSize * 0.56);
+    const lineHeight = Math.max(17, Math.ceil(fontSize * 1.4));
     const longestLine = Math.max(1, ...lines.map((line) => line.length));
     const textShape = ["text-label", "note", "comment", "rationale", "problem", "callout"].includes(node.kind);
     if (simpleShapeKinds.has(node.kind) && !textShape) return;
     const minimumWidth = textShape ? Math.max(MIN_NODE_WIDTH, 120) : 190;
-    const width = clamp(Math.ceil(longestLine * 7.2 + 32), minimumWidth, 420);
-    const charactersPerLine = Math.max(12, Math.floor((width - 32) / 7.2));
+    const width = clamp(Math.ceil(longestLine * characterWidth + 32), minimumWidth, 520);
+    const charactersPerLine = Math.max(12, Math.floor((width - 32) / characterWidth));
     const wrappedLines = lines.reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
     node.width = width;
     node.height = textShape
-      ? clamp(32 + wrappedLines * 18, Math.max(MIN_NODE_HEIGHT, 70), 620)
-      : clamp(50 + wrappedLines * 17 + sections.length * 21, 170, 620);
+      ? clamp(32 + wrappedLines * lineHeight, Math.max(MIN_NODE_HEIGHT, 70), 760)
+      : clamp(50 + wrappedLines * lineHeight + sections.length * 30, 170, 760);
   }
 
   function relationshipDecoration(type) {
@@ -251,6 +302,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     positionPointerSurface(".relationship-toolbar", relationshipToolbar);
     positionPointerSurface(".canvas-context-menu", contextMenu);
     positionShortcutHelp();
+    positionColorPopover();
+  }
+
+  function positionColorPopover() {
+    const popover = element.querySelector(".color-popover");
+    const trigger = popover?.closest("[data-color-control]")?.querySelector("[data-color-toggle]");
+    if (!popover || !trigger) return;
+    const host = element.getBoundingClientRect();
+    const anchor = trigger.getBoundingClientRect();
+    const left = clamp(anchor.left, host.left + 8, Math.max(host.left + 8, host.right - popover.offsetWidth - 8));
+    const below = anchor.bottom + 7;
+    const top = below + popover.offsetHeight <= host.bottom - 8 ? below : Math.max(host.top + 8, anchor.top - popover.offsetHeight - 7);
+    runtimeStyles.set("color-popover-position", ".color-popover", { left: `${left}px`, top: `${top}px` });
   }
 
   function positionShortcutHelp() {
@@ -276,10 +340,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const style = nodeStyle(selected[0]);
     return `<div class="format-toolbar" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
-      <label title="Border color">Border <input data-style="borderColor" type="color" value="${normalizeColor(style.borderColor, themeDefaultNodeStyle(selected[0].kind).borderColor)}" data-initial-color="${normalizeColor(style.borderColor, themeDefaultNodeStyle(selected[0].kind).borderColor)}"></label>
-      <label title="Fill and background color">Fill <input data-style="fillColor" type="color" value="${normalizeColor(style.fillColor, themeDefaultNodeStyle(selected[0].kind).fillColor)}" data-initial-color="${normalizeColor(style.fillColor, themeDefaultNodeStyle(selected[0].kind).fillColor)}"></label>
+      <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", pickerKey: "element:border", open: activeColorPicker === "element:border", styleProperty: "borderColor" })}</span>
+      <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", pickerKey: "element:fill", open: activeColorPicker === "element:fill", styleProperty: "fillColor" })}</span>
       <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <label title="Text color">Text <input data-style="textColor" type="color" value="${normalizeColor(style.textColor, themeDefaultNodeStyle(selected[0].kind).textColor)}" data-initial-color="${normalizeColor(style.textColor, themeDefaultNodeStyle(selected[0].kind).textColor)}"></label>
+      <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", pickerKey: "element:text", open: activeColorPicker === "element:text", styleProperty: "textColor" })}</span>
       <label title="Text size">Size <select data-style="textSize">${[10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32].map((size) => `<option value="${size}" ${style.textSize === size ? "selected" : ""}>${size}px</option>`).join("")}</select></label>
       <label title="Text style">Style <select data-style="textStyle">
         <option value="normal" ${style.textStyle === "normal" ? "selected" : ""}>Normal</option>
@@ -298,7 +362,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     return `<div class="relationship-toolbar" aria-label="Connection formatting toolbar">
       <select data-relationship-style="kind" title="Relation type">${relationshipTypes.map(([type, label]) => `<option value="${type}" ${relationship.kind === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       <label title="Line thickness">Line <select data-relationship-style="width">${[1, 2, 3, 4, 5].map((width) => `<option value="${width}" ${style.width === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <label title="Line and arrow color">Color <input data-relationship-style="color" type="color" value="${normalizeColor(style.color, defaultRelationshipStyle.color)}" data-initial-color="${normalizeColor(style.color, defaultRelationshipStyle.color)}"></label>
+      <span class="format-field" title="Line and arrow color">Color ${renderColorControl({ value: style.color, label: "Line and arrow color", pickerKey: "relationship:color", open: activeColorPicker === "relationship:color", relationshipProperty: "color" })}</span>
       <input data-relationship-text="label" value="${escapeHtml(relationship.label ?? "")}" placeholder="Label" title="Connector label">
       <input data-relationship-text="roleLabel" value="${escapeHtml(relationship.roleLabel ?? "")}" placeholder="Role" title="Role label">
       <input data-relationship-text="multiplicity" value="${escapeHtml(relationship.multiplicity ?? "")}" placeholder="0..*" title="Multiplicity">
@@ -418,6 +482,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       cancelAnimationFrame(renderFrame);
       renderFrame = null;
     }
+    // Collaboration, presence, resize, and theme notifications can arrive while
+    // the user is typing. Replacing the canvas DOM here would discard the
+    // textarea, move the caret, and make typing feel delayed. Those visual
+    // updates are safely picked up by the commit render on blur.
+    if (editingNode && element.querySelector("[data-node-editor]")) return;
     const diagram = state.diagram;
     if (!diagram) return;
     runtimeStyles.clear();
@@ -602,26 +671,40 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         startNodeGesture(event, nodeElement.dataset.node);
       });
       nodeElement.addEventListener("dblclick", (event) => beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection));
+      nodeElement.addEventListener("click", (event) => {
+        const section = event.target.closest("[data-edit-section]")?.dataset.editSection;
+        if (section && !event.shiftKey && !nodeElement.classList.contains("locked")) beginNodeEditing(event, nodeElement.dataset.node, section);
+      });
       nodeElement.addEventListener("contextmenu", (event) => openContextMenu(event, nodeElement.dataset.node));
     });
     element.querySelectorAll("[data-node-editor]").forEach((input) => {
       input.addEventListener("pointerdown", (event) => event.stopPropagation());
       input.addEventListener("paste", (event) => {
-        // contenteditable="plaintext-only" is inconsistent across browser versions, so sanitize paste ourselves.
+        if (!input.isContentEditable) return;
+        // contenteditable="plaintext-only" is inconsistent across browser versions, so sanitize legacy editors ourselves.
         event.preventDefault();
         insertPlainText(input, event.clipboardData?.getData("text/plain") ?? "");
       });
+      input.addEventListener("input", () => scheduleNodeEditingDraft(input));
       input.addEventListener("keydown", (event) => {
         const editingName = input.dataset.nodeSection === "name";
         if (event.key === "Enter" && ((editingName && !event.shiftKey) || (!editingName && (event.ctrlKey || event.metaKey)))) { event.preventDefault(); input.blur(); }
-        if (event.key === "Escape") { event.preventDefault(); editingNode = null; render(); }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          const before = editingNode?.diagramBefore;
+          editingNode = null;
+          if (editingTimer !== null) clearTimeout(editingTimer);
+          editingTimer = null;
+          if (before) setDiagram(before, false);
+          else render();
+        }
       });
-      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.dataset.nodeSection, input.textContent), { once: true });
+      input.addEventListener("blur", () => commitNodeEditing(input.dataset.nodeEditor, input.dataset.nodeSection, editorValue(input)), { once: true });
       requestAnimationFrame(() => {
         input.focus();
-        const selection = window.getSelection();
-        const range = document.createRange(); range.selectNodeContents(input);
-        selection.removeAllRanges(); selection.addRange(range);
+        input.style.height = "auto";
+        input.style.height = `${Math.max(input.scrollHeight, 24)}px`;
+        placeCaretAtPoint(input, editingNode?.clientX ?? 0, editingNode?.clientY ?? 0);
       });
     });
     element.querySelector("[data-selection-area]")?.addEventListener("pointerdown", startSelectionGesture);
@@ -630,6 +713,26 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const allBold = selected.length > 0 && selected.every((node) => nodeStyle(node).textStyle === "bold");
       applyStyle("textStyle", allBold ? "normal" : "bold");
     }));
+    element.querySelectorAll("[data-color-toggle]").forEach((button) => button.addEventListener("click", (event) => {
+      event.preventDefault(); event.stopPropagation();
+      activeColorPicker = activeColorPicker === button.dataset.colorToggle ? null : button.dataset.colorToggle;
+      render();
+    }));
+    element.querySelectorAll("[data-color-choice]").forEach((button) => {
+      const input = button.closest("[data-color-control]")?.querySelector(".color-fallback");
+      button.addEventListener("pointerenter", () => { if (input) previewColor(input, button.dataset.colorChoice); });
+      button.addEventListener("pointerleave", () => { if (input) previewColor(input, normalizeColor(input.value, input.dataset.initialColor)); });
+      button.addEventListener("focus", () => { if (input) previewColor(input, button.dataset.colorChoice); });
+      button.addEventListener("blur", () => { if (input) previewColor(input, normalizeColor(input.value, input.dataset.initialColor)); });
+      button.addEventListener("click", (event) => {
+        event.preventDefault(); event.stopPropagation();
+        if (!input) return;
+        input.value = button.dataset.colorChoice;
+        previewColor(input);
+        activeColorPicker = null;
+        commitColor(input);
+      });
+    });
     element.querySelector("[data-relationship-command='delete']")?.addEventListener("click", deleteSelectedRelationship);
     element.querySelector("[data-relationship-command='reroute']")?.addEventListener("click", () => mutate((next) => {
       const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) delete relationship.waypoints;
@@ -673,25 +776,63 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function beginNodeEditing(event, nodeId, section = "name") {
     event.preventDefault(); event.stopPropagation();
-    editingNode = { id: nodeId, section: section || "name", clientX: event.clientX, clientY: event.clientY };
+    if (editingNode?.id === nodeId && editingNode.section === (section || "name")) return;
+    if (editingTimer !== null) clearTimeout(editingTimer);
+    editingTimer = null;
+    const activeSection = section || "name";
+    const node = state.diagram.elements.find((item) => item.id === nodeId);
+    const stored = activeSection === "name" ? node?.name : node?.properties?.[activeSection];
+    const originalValue = Array.isArray(stored) ? stored.join("\n") : String(stored ?? "");
+    editingNode = { id: nodeId, section: activeSection, clientX: event.clientX, clientY: event.clientY, originalValue, diagramBefore: structuredClone(state.diagram) };
     gesture = null; snapGuides = [];
     render();
   }
 
+  function applyEditedText(diagram, nodeId, section, value) {
+    const node = diagram.elements.find((item) => item.id === nodeId);
+    if (!node) return null;
+    const text = String(value ?? "").replace(/\u00a0/g, " ").trim();
+    if (section === "name") node.name = text || nodeLabel(node.kind);
+    else {
+      node.properties ??= {};
+      const scalarSection = ["text", "templateParameter", "upperMultiplicity", "lowerMultiplicity"].includes(section);
+      node.properties[section] = scalarSection ? text : text ? text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
+    }
+    fitNodeToContent(node);
+    return node;
+  }
+
+  function updateNodeEditingDraft(input) {
+    if (!editingNode || editingNode.id !== input.dataset.nodeEditor || editingNode.section !== input.dataset.nodeSection) return;
+    const next = state.diagram;
+    const node = applyEditedText(next, editingNode.id, editingNode.section, editorValue(input));
+    if (!node) return;
+    (updateDiagramDraft ?? ((diagram) => { state.diagram = diagram; }))(next);
+    runtimeStyles.set(`editing-size-${node.id}`, `.diagram-node[data-node="${runtimeStyles.escape(node.id)}"]`, { width: `${node.width}px`, height: `${node.height}px` });
+    runtimeStyles.commit();
+    input.style.height = "auto";
+    input.style.height = `${Math.max(input.scrollHeight, 24)}px`;
+  }
+
+  function scheduleNodeEditingDraft(input) {
+    if (editingTimer !== null) clearTimeout(editingTimer);
+    editingTimer = setTimeout(() => {
+      editingTimer = null;
+      updateNodeEditingDraft(input);
+    }, 150);
+  }
+
   function commitNodeEditing(nodeId, section, value) {
     if (editingNode?.id !== nodeId || editingNode.section !== section) return;
+    if (editingTimer !== null) clearTimeout(editingTimer);
+    editingTimer = null;
+    const historySnapshot = editingNode.diagramBefore;
+    const unchanged = String(value ?? "").replace(/\u00a0/g, " ").trim() === editingNode.originalValue.trim();
     editingNode = null;
-    const text = value.trim();
-    mutate((next) => {
-      const node = next.elements.find((item) => item.id === nodeId);
-      if (section === "name") node.name = text || nodeLabel(node.kind);
-      else {
-        node.properties ??= {};
-        const scalarSection = ["text", "templateParameter", "upperMultiplicity", "lowerMultiplicity"].includes(section);
-        node.properties[section] = scalarSection ? text : text ? text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
-      }
-      fitNodeToContent(node);
-    });
+    if (unchanged) { render(); return; }
+    const next = structuredClone(state.diagram);
+    applyEditedText(next, nodeId, section, value);
+    setDiagram(next, true, historySnapshot);
   }
 
   function startSelectionGesture(event) {
@@ -743,6 +884,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           // resolved only while rendering and must never be persisted over a
           // color selected by the user.
           node.style = { ...(node.style ?? {}), [property]: nextValue };
+          if (property === "textSize") fitNodeToContent(node);
         }
       });
     });
@@ -757,23 +899,41 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     });
   }
 
-  function previewColor(input) {
-    const value = normalizeColor(input.value, "#000000");
-    input.value = value;
+  function colorValueFromInput(input) {
+    if (input.type === "color") return normalizeColor(input.value, input.dataset.initialColor);
+    return isColorInputValue(input.value) ? normalizeColor(input.value, input.dataset.initialColor) : null;
+  }
+
+  function synchronizeColorControl(input, value) {
+    const control = input.closest("[data-color-control]");
+    if (!control) return;
+    const nativeInput = control.querySelector(".color-native");
+    const fallbackInput = control.querySelector(".color-fallback");
+    control.querySelector(".color-trigger rect")?.setAttribute("fill", value);
+    if (nativeInput && nativeInput !== input) nativeInput.value = value;
+    if (fallbackInput && fallbackInput !== input) fallbackInput.value = value.toUpperCase();
+    control.style.setProperty("--selected-color", value);
+  }
+
+  function previewColor(input, value = colorValueFromInput(input)) {
+    if (!value) { input.setAttribute("aria-invalid", "true"); return false; }
+    input.removeAttribute("aria-invalid");
+    synchronizeColorControl(input, value);
     if (input.dataset.style) {
       const property = input.dataset.style;
       const cssProperty = { fillColor: "--node-fill", borderColor: "--node-border", textColor: "--node-text-color" }[property];
-      if (cssProperty) runtimeStyles.set("color-preview-node", ".diagram-node.selected", { [cssProperty]: value });
+      if (cssProperty) element.querySelectorAll(".diagram-node.selected").forEach((node) => node.style.setProperty(cssProperty, value));
     }
     if (input.dataset.relationshipStyle === "color") {
-      runtimeStyles.set("color-preview-relationship", ".relationship-line.selected", { "--relationship-color": value });
+      element.querySelector(".relationship-line.selected")?.style.setProperty("--relationship-color", value);
     }
-    runtimeStyles.commit();
+    return true;
   }
 
   function commitColor(input) {
     if (!input || input.dataset.colorCommitted === "true") return;
-    const value = normalizeColor(input.value, input.dataset.initialColor ?? "#000000");
+    const value = colorValueFromInput(input);
+    if (!value) { input.setAttribute("aria-invalid", "true"); return; }
     if (value === input.dataset.initialColor) return;
     input.dataset.colorCommitted = "true";
     if (input.dataset.style) applyStyle(input.dataset.style, value);
@@ -858,7 +1018,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("pointerdown", (event) => {
     if (editingNode && !event.target.closest("[data-node-editor]")) {
       const editor = element.querySelector("[data-node-editor]");
-      if (editor) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editor.textContent);
+      if (editor) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editorValue(editor));
       return;
     }
     if (event.pointerType === "touch") {
@@ -892,7 +1052,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     setZoom(zoom * Math.exp(-clamp(pixels, -120, 120) * 0.0015), event.clientX, event.clientY);
   }, { passive: false, signal: lifecycle.signal });
   element.addEventListener("input", (event) => {
-    const input = event.target.closest("input[type='color']");
+    const input = event.target.closest("[data-color-input]");
     if (!input) return;
     event.stopPropagation();
     previewColor(input);
@@ -901,7 +1061,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const input = event.target.closest("[data-style],[data-relationship-style]");
     if (!input) return;
     event.stopPropagation();
-    if (input.type === "color") { previewColor(input); commitColor(input); return; }
+    if (input.dataset.colorInput) { previewColor(input); activeColorPicker = null; commitColor(input); return; }
     if (input.dataset.style) {
       const numeric = input.dataset.style === "borderWidth" || input.dataset.style === "textSize";
       applyStyle(input.dataset.style, input.type === "color" ? input.value : numeric ? Number(input.value) : input.value);
@@ -909,8 +1069,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, input.value);
   }, { signal: lifecycle.signal });
   element.addEventListener("focusout", (event) => {
-    const input = event.target.closest?.("input[type='color']");
+    const input = event.target.closest?.("[data-color-input]");
     if (input) commitColor(input);
+  }, { signal: lifecycle.signal });
+  element.addEventListener("keydown", (event) => {
+    const input = event.target.closest?.(".color-fallback");
+    if (!input || event.key !== "Enter") return;
+    event.preventDefault();
+    commitColor(input);
   }, { signal: lifecycle.signal });
   element.addEventListener("scroll", () => {
     if (viewportFrame !== null) return;
@@ -926,6 +1092,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
   }, { signal: lifecycle.signal });
   window.addEventListener("pointerdown", (event) => {
+    if (activeColorPicker && !event.target.closest?.("[data-color-control]")) {
+      activeColorPicker = null;
+      render();
+      return;
+    }
     if (!shortcutHelpOpen || event.target.closest?.("#keyboard-help,.shortcut-overlay")) return;
     // Capture dismissal before canvas pointer handlers can replace the clicked DOM during a render.
     setShortcutHelpOpen(false);
@@ -1082,6 +1253,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }, { signal: lifecycle.signal });
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && activeColorPicker) {
+      event.preventDefault();
+      activeColorPicker = null;
+      render();
+      return;
+    }
     if (event.key === "Escape" && shortcutHelpOpen) {
       event.preventDefault();
       setShortcutHelpOpen(false);
@@ -1194,6 +1371,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (renderFrame !== null) cancelAnimationFrame(renderFrame);
     if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
     if (viewportResizeFrame !== null) cancelAnimationFrame(viewportResizeFrame);
+    if (editingTimer !== null) clearTimeout(editingTimer);
     runtimeStyles.destroy();
   };
 });

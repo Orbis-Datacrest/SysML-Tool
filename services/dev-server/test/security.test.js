@@ -5,8 +5,9 @@ import { hashPassword, isValidEmail, normalizeEmail, tenantIdForEmail, validateP
 test("authentication primitives normalize and validate credentials", () => {
   assert.equal(normalizeEmail("  Engineer@Example.COM "), "engineer@example.com");
   assert.equal(isValidEmail("engineer@example.com"), true);
-  assert.equal(validatePassword("short"), "Password must be at least 8 characters.");
-  assert.equal(validatePassword("long-enough"), "");
+  assert.equal(validatePassword("short"), "Password must be at least 6 characters.");
+  assert.match(validatePassword("long-enough"), /uppercase, lowercase, and numeric/);
+  assert.equal(validatePassword("Long-enough1"), "");
 });
 
 test("password hashes verify safely and tenant identifiers are deterministic", () => {

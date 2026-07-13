@@ -4,7 +4,12 @@ export const now = () => new Date().toISOString();
 export const addDays = (days) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 export const normalizeEmail = (email) => String(email ?? "").trim().toLowerCase();
 export const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-export const validatePassword = (password) => String(password ?? "").length < 8 ? "Password must be at least 8 characters." : "";
+export function validatePassword(password) {
+  const value = String(password ?? "");
+  if (value.length < 6) return "Password must be at least 6 characters.";
+  if (!/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/\d/.test(value)) return "Password must include uppercase, lowercase, and numeric characters.";
+  return "";
+}
 
 export function hashPassword(password, salt = crypto.randomBytes(16).toString("base64url")) {
   return { salt, hash: crypto.scryptSync(password, salt, 64).toString("base64url") };

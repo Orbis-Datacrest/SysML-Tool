@@ -51,11 +51,24 @@ registerMfe("project-validation", (element, { state, bus }) => {
 
   function render() {
     const issues = diagnostics();
-    element.innerHTML = `<div class="panel validation-panel"><div class="validation-heading"><h2>Validation</h2><span class="validation-count ${issues.length ? "has-errors" : ""}">${issues.length}</span></div>
-      <select id="severity-filter" aria-label="Filter validation severity"><option value="all">All severities</option>${["error", "warning", "info"].map((severity) => `<option value="${severity}" ${severityFilter === severity ? "selected" : ""}>${severity}</option>`).join("")}</select>
-      <div class="validation-list">${issues.map((diagnostic) => `<button class="validation-item ${diagnostic.severity}" data-diagnostic-id="${escapeHtml(diagnostic.affectedElement.id)}" data-diagnostic-type="${diagnostic.affectedElement.type}"><span class="severity-dot"></span><span><strong>${escapeHtml(diagnostic.message)}</strong><small>${escapeHtml(diagnostic.suggestedFix)}</small></span></button>`).join("") || `<p class="validation-clean">✓ No model issues found</p>`}</div>
+    const expanded = state.validationExpanded !== false;
+    element.innerHTML = `<div class="panel validation-panel ${expanded ? "expanded" : "collapsed"}">
+      <button class="validation-heading" id="validation-toggle" type="button" aria-expanded="${expanded}" aria-controls="validation-content">
+        <span class="validation-disclosure" aria-hidden="true">${expanded ? "▾" : "▸"}</span><span class="validation-title">Validation</span><span class="validation-count ${issues.length ? "has-errors" : ""}">${issues.length}</span>
+      </button>
+      <div id="validation-content" class="validation-content" aria-hidden="${!expanded}">
+        <div class="validation-content-inner">
+          <select id="severity-filter" aria-label="Filter validation severity"><option value="all">All severities</option>${["error", "warning", "info"].map((severity) => `<option value="${severity}" ${severityFilter === severity ? "selected" : ""}>${severity}</option>`).join("")}</select>
+          <div class="validation-list">${issues.map((diagnostic) => `<button class="validation-item ${diagnostic.severity}" data-diagnostic-id="${escapeHtml(diagnostic.affectedElement.id)}" data-diagnostic-type="${diagnostic.affectedElement.type}"><span class="severity-dot"></span><span><strong>${escapeHtml(diagnostic.message)}</strong><small>${escapeHtml(diagnostic.suggestedFix)}</small></span></button>`).join("") || `<p class="validation-clean">✓ No model issues found</p>`}</div>
+        </div>
+      </div>
     </div>`;
-    element.querySelector("#severity-filter").addEventListener("change", (event) => { severityFilter = event.target.value; render(); });
+    element.querySelector("#validation-toggle").addEventListener("click", () => {
+      state.validationExpanded = !expanded;
+      try { localStorage.setItem("sysml.validationExpanded", String(state.validationExpanded)); } catch {}
+      render();
+    });
+    element.querySelector("#severity-filter")?.addEventListener("change", (event) => { severityFilter = event.target.value; render(); });
     element.querySelectorAll("[data-diagnostic-id]").forEach((button) => button.addEventListener("click", () => focusDiagnostic(button.dataset.diagnosticId, button.dataset.diagnosticType)));
   }
 

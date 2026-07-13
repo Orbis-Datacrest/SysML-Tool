@@ -5,8 +5,7 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (character)
 
 export function createNodeRenderer({ getEditingNode }) {
   function sectionEditor(node, section, value, label, displayClass = "") {
-    const tag = section === "name" ? "span" : "div";
-    return `<${tag} class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" contenteditable="true" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" role="textbox" aria-multiline="true" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</${tag}>`;
+    return `<textarea class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" rows="1" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</textarea>`;
   }
 
   function editableText(node, section, value, className, label) {
@@ -67,7 +66,9 @@ export function createNodeRenderer({ getEditingNode }) {
     if (node.kind === "requirement") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Requirement name")}<div class="node-stereotype">«requirement»</div></div>
       <div class="node-compartments">
         <section class="node-compartment"><span class="compartment-label">id</span><div class="compartment-content">${escapeHtml(node.properties?.requirementId ?? node.id)}</div></section>
-        <section class="node-compartment" data-edit-section="text" title="Double-click to edit requirement text"><span class="compartment-label">text</span><div class="compartment-content">${escapeHtml(node.properties?.text ?? "").replace(/\n/g, "<br>") || `<span class="compartment-placeholder">Add shall statement...</span>`}</div></section>
+        ${getEditingNode()?.id === node.id && getEditingNode().section === "text"
+          ? `<section class="node-compartment editing"><span class="compartment-label">text</span>${sectionEditor(node, "text", node.properties?.text ?? "", "Requirement text")}</section>`
+          : `<section class="node-compartment" data-edit-section="text" title="Click to edit requirement text"><span class="compartment-label">text</span><div class="compartment-content">${escapeHtml(node.properties?.text ?? "").replace(/\n/g, "<br>") || `<span class="compartment-placeholder">Add shall statement...</span>`}</div></section>`}
         <section class="node-compartment"><span class="compartment-label">verification</span><div class="compartment-content">${escapeHtml([node.properties?.verificationMethod, node.properties?.verificationStatus].filter(Boolean).join(" / "))}</div></section>
       </div>`;
     if (node.kind === "interface-block" || node.kind === "interface-definition") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Interface name")}<div class="node-stereotype">«${escapeHtml(node.properties?.interfaceKind ?? "interface")} interface»</div></div>
@@ -85,7 +86,7 @@ export function createNodeRenderer({ getEditingNode }) {
         const text = Array.isArray(values) ? values.join("\n") : String(values ?? "");
         const collapsed = Boolean(node.properties?.collapsedCompartments?.[key]);
         const toggle = `<button class="compartment-toggle" data-compartment-toggle="${node.id}" data-compartment-key="${key}" title="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(label)}">${collapsed ? "+" : "−"}</button>`;
-        if (getEditingNode()?.id === node.id && getEditingNode().section === key) return `<section class="node-compartment editing">${sectionEditor(node, key, text, label)}</section>`;
+        if (getEditingNode()?.id === node.id && getEditingNode().section === key) return `<section class="node-compartment editing"><span class="compartment-label">${label}</span>${sectionEditor(node, key, text, label)}</section>`;
         return `<section class="node-compartment ${collapsed ? "collapsed" : ""}" data-edit-section="${key}" title="Double-click to edit ${label.toLowerCase()}"><span class="compartment-label">${toggle}${label}</span><div class="compartment-content">${collapsed ? "" : text ? escapeHtml(text).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${label.toLowerCase()}…</span>`}</div></section>`;
       }).join("")}</div>`;
   }

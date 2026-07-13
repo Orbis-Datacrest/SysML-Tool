@@ -211,3 +211,7 @@ export function normalizeColor(value, fallback = "#000000") {
   if (rgb) return `#${rgb.slice(1, 4).map((part) => Math.round(clamp(Number(part), 0, 255)).toString(16).padStart(2, "0")).join("")}`;
   return normalizeColor(fallback === value ? "#000000" : fallback, "#000000");
 }
+
+export function isColorInputValue(value) {
+  return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(String(value ?? "").trim());
+}

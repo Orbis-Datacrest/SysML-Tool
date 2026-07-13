@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
+import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, isColorInputValue, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -91,4 +91,7 @@ test("colors are normalized for native pickers and invalid values use a safe fal
   assert.equal(normalizeColor("#3af"), "#33aaff");
   assert.equal(normalizeColor("rgb(300, 16, -2)"), "#ff1000");
   assert.equal(normalizeColor("transparent", "#123456"), "#123456");
+  assert.equal(isColorInputValue("#3af"), true);
+  assert.equal(isColorInputValue("#33AAFF"), true);
+  assert.equal(isColorInputValue("33AAFF"), false);
 });

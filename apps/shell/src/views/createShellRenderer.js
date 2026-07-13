@@ -4,13 +4,17 @@ import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js"
 
 export function createShellRenderer({
   api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
-  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram
+  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 }) {
 let cleanupSidebarInteractions = () => {};
 let cleanupMountedModules = () => {};
 let themeRequestVersion = 0;
 let rightPanelRequestVersion = 0;
 function renderShell() {
+  if (!state.user && state.view === "editor") {
+    state.view = "dashboard";
+    resetEditorInteractionState(state);
+  }
   cleanupSidebarInteractions();
   cleanupMountedModules();
   cleanupSidebarInteractions = () => {};
@@ -100,7 +104,7 @@ function renderShell() {
       state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth
     );
   }
-  const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram };
+  const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft };
   const moduleCleanups = [];
   const mount = (name, target) => {
     const cleanup = mountMfe(name, target, context);
