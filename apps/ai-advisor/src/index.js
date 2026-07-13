@@ -19,7 +19,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
             <button id="ask" class="primary">Preview AI Change</button>
             <button id="explain">Explain</button>
           </div>
-          ${preview ? `<div class="preview"><strong>${preview.patch.summary}</strong><br>${preview.patch.operations.length} proposed operation(s)<div class="row" style="margin-top:8px"><button id="apply" class="primary">Apply</button><button id="discard">Discard</button></div></div>` : ""}
+          ${preview ? `<div class="preview"><strong>${preview.patch.summary}</strong><br>${preview.patch.operations.length} proposed operation(s)<div class="row preview-actions"><button id="apply" class="primary">Apply</button><button id="discard">Discard</button></div></div>` : ""}
         </div>
       </div>
     `;

@@ -40,7 +40,7 @@ function renderShell() {
       </div>
     </header>
     ${state.view === "editor" ? `
-      <main class="workspace ${state.sidebarLayout.left.open ? "left-open" : ""} ${state.sidebarLayout.right.open ? "right-open" : ""}" style="--left-sidebar-width:${state.sidebarLayout.left.open ? state.sidebarLayout.left.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px;--right-sidebar-width:${state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px">
+      <main class="workspace ${state.sidebarLayout.left.open ? "left-open" : ""} ${state.sidebarLayout.right.open ? "right-open" : ""}">
         <aside id="project-tools-sidebar" class="left-rail" data-open="${state.sidebarLayout.left.open}" aria-label="Project tools">
           <div class="sidebar-header"><button id="sidebar-toggle" class="sidebar-toggle" title="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-content" aria-expanded="${state.sidebarLayout.left.open}">☰</button><strong>Project tools</strong></div>
           <div id="project-tools-content" class="sidebar-content">
@@ -79,6 +79,12 @@ function renderShell() {
       </main>
     `}
   `;
+  // Sidebar widths are live application state, so apply them after rendering instead of embedding presentation in the markup.
+  const workspace = document.querySelector(".workspace");
+  if (workspace) {
+    workspace.style.setProperty("--left-sidebar-width", `${state.sidebarLayout.left.open ? state.sidebarLayout.left.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px`);
+    workspace.style.setProperty("--right-sidebar-width", `${state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px`);
+  }
   const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram };
   const moduleCleanups = [];
   const mount = (name, target) => {
@@ -111,7 +117,6 @@ function renderShell() {
   document.querySelector("#brand-home")?.addEventListener("click", () => {
     if (state.view === "editor") showDashboard();
   });
-  const workspace = document.querySelector(".workspace");
   const notifyCanvasResize = () => document.querySelector("#diagram-canvas")?.dispatchEvent(new Event("canvas:resize"));
   const applySidebarLayout = ({ persist = true } = {}) => {
     if (!workspace) return;

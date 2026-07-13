@@ -1,7 +1,8 @@
-.topbar { height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 clamp(8px, 1.2vw, 14px); background: #080c13; color: #fff; border-bottom: 1px solid var(--line); }
-.topbar span { margin-left: 14px; color: #aab7ca; }
-.topbar-left { min-width: 0; display: flex; align-items: center; gap: 8px; }
-.topbar-actions { display: flex; align-items: center; gap: 6px; }
+.topbar { position: relative; z-index: 140; min-width: 0; height: var(--topbar-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 0 clamp(8px, 1.2vw, 14px); overflow: visible; background: #080c13; color: #fff; border-bottom: 1px solid var(--line); }
+.topbar span { color: #aab7ca; }
+.topbar-left { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
+.topbar-actions { min-width: 0; flex: 0 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.topbar-actions > * { flex: 0 0 auto; }
 .topbar button, .topbar .export-button, .topbar .top-project-name, .topbar .topbar-auth > button { height: 32px; min-height: 32px; display: inline-flex; align-items: center; }
 .share-control { position: relative; }
 .share-button { display: inline-flex; height: 32px; align-items: center; gap: 7px; padding: 0 0 0 11px; border: 0; border-radius: 16px; background: #bfe5ff; color: #075b88; font-weight: 800; }
@@ -43,7 +44,7 @@
 :root[data-theme="light"] .brand-button:hover { background: #edf2f7; color: #111827; }
 .icon-button { width: 32px; height: 32px; padding: 0; justify-content: center; font-size: 17px; line-height: 1; }
 .icon-button.active { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2), transparent 82%); color: var(--accent-2); }
-.save-status { min-width: 72px; margin-left: 0 !important; color: var(--muted); font-size: 12px; }
+.save-status { min-width: 72px; color: var(--muted); font-size: 12px; }
 #project-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-project-name { display: flex; min-width: 150px; max-width: min(420px, 35vw); height: 32px; align-items: center; gap: 8px; padding: 3px 9px; border: 1px dashed color-mix(in srgb, var(--accent-2), transparent 35%); border-radius: 7px; background: color-mix(in srgb, var(--panel), transparent 15%); color: var(--ink); cursor: text; font-size: 14px; font-weight: 750; }
 .top-project-name:hover { border-style: solid; border-color: var(--accent-2); background: color-mix(in srgb, var(--panel-2), transparent 5%); }

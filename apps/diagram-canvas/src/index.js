@@ -52,6 +52,17 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
 
+  // Keep every help entry point on one state transition so click, keyboard, and outside dismissal stay in sync.
+  function setShortcutHelpOpen(open) {
+    shortcutHelpOpen = open;
+    if (open) {
+      searchOpen = false;
+      printPreviewOpen = false;
+      bus.emit("ui:menu-open", "help");
+    }
+    render();
+  }
+
   const selectedIds = () => state.selectedElementIds ?? [];
   const currentTheme = () => document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const themeDefaultNodeStyle = (kind) => ({
@@ -169,24 +180,57 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     </svg>`;
   }
 
-  function toolbarPosition(diagram) {
+  function toolbarPosition(diagram, surfaceWidth = 650, surfaceHeight = 48) {
     const bounds = selectionBounds(diagram.elements, selectedIds());
     if (!bounds) return null;
     const rect = element.getBoundingClientRect();
-    const width = 650;
+    const width = Math.min(surfaceWidth, Math.max(0, rect.width - 16));
+    const height = Math.min(surfaceHeight, Math.max(0, rect.height - 16));
     return {
       x: clamp(rect.left + bounds.left * zoom - element.scrollLeft, rect.left + 8, rect.right - width - 8),
-      y: clamp(rect.top + bounds.top * zoom - element.scrollTop - 48, rect.top + 8, rect.bottom - 48)
+      y: clamp(rect.top + bounds.top * zoom - element.scrollTop - height, rect.top + 8, rect.bottom - height - 8)
     };
   }
 
   function positionFormattingToolbar() {
     const toolbar = element.querySelector(".format-toolbar");
     if (!toolbar || !state.diagram) return;
-    const position = toolbarPosition(state.diagram);
+    // Measure the rendered toolbar; guessed widths caused clipping beside open sidebars.
+    const position = toolbarPosition(state.diagram, toolbar.offsetWidth, toolbar.offsetHeight);
     if (!position) return;
     toolbar.style.left = `${position.x}px`;
     toolbar.style.top = `${position.y}px`;
+  }
+
+  function positionPointerSurface(selector, preferred) {
+    const surface = element.querySelector(selector);
+    if (!surface || !preferred) return;
+    const rect = element.getBoundingClientRect();
+    const maximumX = Math.max(rect.left + 8, rect.right - surface.offsetWidth - 8);
+    const maximumY = Math.max(rect.top + 8, rect.bottom - surface.offsetHeight - 8);
+    surface.style.left = `${clamp(preferred.x, rect.left + 8, maximumX)}px`;
+    surface.style.top = `${clamp(preferred.y, rect.top + 8, maximumY)}px`;
+  }
+
+  function positionFloatingSurfaces() {
+    positionFormattingToolbar();
+    positionPointerSurface(".relationship-toolbar", relationshipToolbar);
+    positionPointerSurface(".canvas-context-menu", contextMenu);
+    positionShortcutHelp();
+  }
+
+  function positionShortcutHelp() {
+    const trigger = element.querySelector("#keyboard-help");
+    const menu = element.querySelector(".shortcut-overlay");
+    if (!trigger || !menu) return;
+    const hostRect = element.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    menu.style.setProperty("--canvas-available-width", `${hostRect.width}px`);
+    // Anchor the menu to the trigger while keeping the complete panel inside the canvas viewport.
+    const maximumLeft = Math.max(hostRect.left + 8, hostRect.right - menu.offsetWidth - 8);
+    const maximumTop = Math.max(hostRect.top + 8, hostRect.bottom - menu.offsetHeight - 8);
+    menu.style.left = `${clamp(triggerRect.right - menu.offsetWidth, hostRect.left + 8, maximumLeft)}px`;
+    menu.style.top = `${clamp(triggerRect.bottom + 6, hostRect.top + 8, maximumTop)}px`;
   }
 
   function renderFormattingToolbar(diagram) {
@@ -194,8 +238,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const selected = diagram.elements.filter((node) => selectedIds().includes(node.id));
     if (!selected.length) return "";
     const style = nodeStyle(selected[0]);
-    const position = toolbarPosition(diagram);
-    return `<div class="format-toolbar" style="left:${position.x}px;top:${position.y}px" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
+    return `<div class="format-toolbar" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
       <label title="Border color">Border <input data-style="borderColor" type="color" value="${normalizeColor(style.borderColor, themeDefaultNodeStyle(selected[0].kind).borderColor)}" data-initial-color="${normalizeColor(style.borderColor, themeDefaultNodeStyle(selected[0].kind).borderColor)}"></label>
       <label title="Fill and background color">Fill <input data-style="fillColor" type="color" value="${normalizeColor(style.fillColor, themeDefaultNodeStyle(selected[0].kind).fillColor)}" data-initial-color="${normalizeColor(style.fillColor, themeDefaultNodeStyle(selected[0].kind).fillColor)}"></label>
@@ -216,7 +259,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const relationship = state.diagram.relationships.find((item) => item.id === state.selectedRelationshipId);
     if (!relationship) return "";
     const style = relationshipStyle(relationship);
-    return `<div class="relationship-toolbar" style="left:${relationshipToolbar.x}px;top:${relationshipToolbar.y}px" aria-label="Connection formatting toolbar">
+    return `<div class="relationship-toolbar" aria-label="Connection formatting toolbar">
       <select data-relationship-style="kind" title="Relation type">${relationshipTypes.map(([type, label]) => `<option value="${type}" ${relationship.kind === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       <label title="Line thickness">Line <select data-relationship-style="width">${[1, 2, 3, 4, 5].map((width) => `<option value="${width}" ${style.width === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
       <label title="Line and arrow color">Color <input data-relationship-style="color" type="color" value="${normalizeColor(style.color, defaultRelationshipStyle.color)}" data-initial-color="${normalizeColor(style.color, defaultRelationshipStyle.color)}"></label>
@@ -234,7 +277,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const allLocked = selected.every((node) => node.locked);
     const selectedGroups = new Set(selected.filter((node) => node.groupId).map((node) => node.groupId));
     const completeSingleGroup = selectedGroups.size === 1 && selected.every((node) => node.groupId === [...selectedGroups][0]);
-    return `<div class="canvas-context-menu" style="left:${contextMenu.x}px;top:${contextMenu.y}px" role="menu">
+    return `<div class="canvas-context-menu" role="menu">
       <button data-command="delete" class="context-danger" role="menuitem">Delete <kbd>Del</kbd></button>
       <span class="context-separator" role="separator"></span>
       <button data-command="cut" role="menuitem">Cut <kbd>Ctrl+X</kbd></button><button data-command="copy" role="menuitem">Copy <kbd>Ctrl+C</kbd></button><button data-command="duplicate" role="menuitem">Duplicate <kbd>Ctrl+D</kbd></button>
@@ -303,9 +346,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     </div>`;
   }
 
-  function renderShortcutHelp(hostRect) {
+  function renderShortcutHelp() {
     if (!shortcutHelpOpen) return "";
-    return `<div class="canvas-overlay shortcut-overlay" style="left:${hostRect.left + hostRect.width / 2}px;--canvas-available-width:${hostRect.width}px"><div class="overlay-title">Keyboard shortcuts</div>
+    return `<div id="keyboard-help-menu" class="canvas-overlay shortcut-overlay"><div class="overlay-title">Keyboard shortcuts</div>
       <div class="shortcut-grid">${shortcutRows.map(([keys, label]) => `<kbd>${escapeHtml(keys)}</kbd><span>${escapeHtml(label)}</span>`).join("")}</div>
     </div>`;
   }
@@ -329,13 +372,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const scroll = { left: element.scrollLeft, top: element.scrollTop };
     const hostRect = element.getBoundingClientRect();
     const previewTop = paletteHover ? clamp(paletteHover.clientY - 100, hostRect.top + 68, hostRect.bottom - 224) : 0;
+    // Coordinates and model-selected colors below are live diagram data; structural presentation remains in canvas.css.
     element.innerHTML = `<div class="canvas-chrome"><div class="canvas-toolbar">
       <button id="history-undo" title="Undo last change" aria-label="Undo last change" ${state.history.length ? "" : "disabled"}>↶</button><button id="history-redo" title="Redo last change" aria-label="Redo last change" ${state.future.length ? "" : "disabled"}>↷</button>
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" aria-label="Reset zoom to 100%" class="zoom-level ${zoom === 1 ? "active" : ""}" ${zoom === 1 ? "disabled" : ""}>${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
       <button id="fit-diagram" title="Fit diagram" aria-label="Fit diagram in canvas">Fit</button><button id="fit-selection" title="Fit selection" aria-label="Fit selected elements in canvas" ${selectedIds().length ? "" : "disabled"}>Fit sel</button>
       <button id="select-all" class="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length ? "active" : ""}" title="Select all elements" aria-label="Select all elements" aria-pressed="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length}" ${diagram.elements.length ? "" : "disabled"}>Select all</button>
       <select id="grid-size" title="Grid size" aria-label="Canvas grid size">${[0, 10, 20, 40, 80].map((size) => `<option value="${size}" ${gridSize === size ? "selected" : ""}>${size ? `${size}px grid` : "Grid off"}</option>`).join("")}</select>
-      <button id="keyboard-help" class="${shortcutHelpOpen ? "active" : ""}" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-pressed="${shortcutHelpOpen}">?</button>
+      <button id="keyboard-help" class="${shortcutHelpOpen ? "active" : ""}" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-controls="keyboard-help-menu" aria-expanded="${shortcutHelpOpen}" aria-pressed="${shortcutHelpOpen}">?</button>
     </div>${paletteHover ? `<div class="palette-canvas-preview" style="left:${hostRect.left + 14}px;top:${previewTop}px" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
       ${pointerDrag ? `<div class="canvas-drag-ghost" style="left:${pointerDrag.clientX + 16}px;top:${pointerDrag.clientY + 16}px"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
     <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}" style="width:${CANVAS.width * zoom}px;height:${CANVAS.height * zoom}px;--grid-size:${Math.max(1, gridSize)}px">
@@ -354,9 +398,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         }).join("")}
         ${gesture?.type === "marquee" ? `<div class="selection-marquee" style="left:${gesture.rect.left}px;top:${gesture.rect.top}px;width:${gesture.rect.right - gesture.rect.left}px;height:${gesture.rect.bottom - gesture.rect.top}px"></div>` : ""}
       </div>
-    </div>${renderMinimap(diagram, hostRect)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram, hostRect)}${renderShortcutHelp(hostRect)}${renderPrintPreview(diagram)}`;
+    </div>${renderMinimap(diagram, hostRect)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram, hostRect)}${renderShortcutHelp()}${renderPrintPreview(diagram)}`;
     element.scrollLeft = scroll.left; element.scrollTop = scroll.top;
     bindRenderedEvents();
+    positionFloatingSurfaces();
     syncMinimapViewport();
   }
 
@@ -421,13 +466,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelector("#fit-diagram").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram)));
     element.querySelector("#fit-selection").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram, selectedIds())));
     element.querySelector("#select-all").addEventListener("click", () => setSelection(state.diagram.elements.map((node) => node.id)));
-    element.querySelector("#keyboard-help").addEventListener("click", () => {
-      shortcutHelpOpen = !shortcutHelpOpen;
-      searchOpen = false;
-      printPreviewOpen = false;
-      if (shortcutHelpOpen) bus.emit("ui:menu-open", "help");
-      render();
-    });
+    element.querySelector("#keyboard-help").addEventListener("click", () => setShortcutHelpOpen(!shortcutHelpOpen));
     element.querySelector("#grid-size").addEventListener("change", (event) => setCanvasMetadata({ gridSize: Number(event.target.value), showGrid: Number(event.target.value) > 0 }));
     const searchInput = element.querySelector("#diagram-search");
     const minimap = element.querySelector("[data-minimap-plane]");
@@ -614,15 +653,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function openContextMenu(event, nodeId) {
     event.preventDefault(); event.stopPropagation(); relationshipToolbar = null;
     if (!selectedIds().includes(nodeId)) setSelection(expandGroupedSelection(state.diagram.elements, [nodeId]), null, false);
-    const rect = element.getBoundingClientRect();
-    contextMenu = { x: clamp(event.clientX, rect.left + 4, rect.right - 210), y: clamp(event.clientY, rect.top + 4, rect.bottom - 300) };
+    // The menu is clamped after render using its actual size.
+    contextMenu = { x: event.clientX, y: event.clientY };
     render();
   }
 
   function openRelationshipToolbar(event, relationshipId) {
     event.preventDefault(); event.stopPropagation(); contextMenu = null;
-    const rect = element.getBoundingClientRect();
-    relationshipToolbar = { x: clamp(event.clientX, rect.left + 8, rect.right - 470), y: clamp(event.clientY, rect.top + 8, rect.bottom - 52) };
+    relationshipToolbar = { x: event.clientX, y: event.clientY };
     setSelection([], relationshipId);
   }
 
@@ -714,7 +752,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function executeCommand(command) {
     contextMenu = null;
-    if (command === "keyboard-help") { shortcutHelpOpen = true; searchOpen = false; printPreviewOpen = false; bus.emit("ui:menu-open", "help"); render(); return; }
+    if (command === "keyboard-help") { setShortcutHelpOpen(!shortcutHelpOpen); return; }
     if (command === "print-preview") { printPreviewOpen = true; render(); return; }
     if (command === "close-print") { printPreviewOpen = false; render(); return; }
     if (command === "print-diagram") { window.print(); return; }
@@ -813,6 +851,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("contextmenu", (event) => {
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
   });
+  window.addEventListener("pointerdown", (event) => {
+    if (!shortcutHelpOpen || event.target.closest?.("#keyboard-help,.shortcut-overlay")) return;
+    // Capture dismissal before canvas pointer handlers can replace the clicked DOM during a render.
+    setShortcutHelpOpen(false);
+  }, { capture: true, signal: lifecycle.signal });
   window.addEventListener("click", (event) => {
     const hasOpenToolbarSurface = searchOpen || shortcutHelpOpen || printPreviewOpen;
     if (!hasOpenToolbarSurface) return;
@@ -954,6 +997,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }, { signal: lifecycle.signal });
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && shortcutHelpOpen) {
+      event.preventDefault();
+      setShortcutHelpOpen(false);
+      return;
+    }
     const activeElement = document.activeElement;
     const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement?.tagName)
       || activeElement?.isContentEditable
@@ -978,9 +1026,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       executeCommand(command);
     }
     if (key === "?") {
-      event.preventDefault(); shortcutHelpOpen = !shortcutHelpOpen; searchOpen = false; printPreviewOpen = false;
-      if (shortcutHelpOpen) bus.emit("ui:menu-open", "help");
-      render();
+      event.preventDefault();
+      setShortcutHelpOpen(!shortcutHelpOpen);
+      return;
     }
     if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
     if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; activeRelationshipKind = null; activeRelationshipLabel = null; searchOpen = false; shortcutHelpOpen = false; printPreviewOpen = false; render(); }

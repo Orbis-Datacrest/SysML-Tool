@@ -148,15 +148,24 @@
 .canvas-drag-ghost .shape-fill { fill: #23486b; }
 .canvas-drag-ghost .solid { fill: currentColor; }
 .canvas-drag-ghost strong { max-width: 100%; font-size: 10px; text-align: center; overflow-wrap: anywhere; }
-.canvas-toolbar { position: absolute; top: 5px; left: 8px; width: max-content; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; z-index: 20; padding: 3px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: rgb(8 12 19 / 88%); backdrop-filter: blur(10px); white-space: nowrap; }
+.canvas-toolbar { position: absolute; top: 5px; left: 8px; width: max-content; min-width: max-content; display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 4px; z-index: 20; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; overflow: visible; background: rgb(8 12 19 / 88%); background-clip: padding-box; backdrop-filter: blur(10px); white-space: nowrap; }
 .canvas-toolbar { pointer-events: auto; }
-.canvas-toolbar button, .canvas-toolbar select { flex: 0 0 auto; min-height: 26px; padding: 3px 6px; white-space: nowrap; line-height: 1; }
-.canvas-toolbar select { max-width: 190px; }
+/* A fixed control height centers labels and keeps the primary toolbar on one uninterrupted row. */
+.canvas-toolbar button, .canvas-toolbar select { flex: 0 0 auto; height: 28px; min-height: 28px; padding: 0 7px; white-space: nowrap; line-height: normal; }
+.canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; }
+.canvas-toolbar select { width: auto; max-width: 190px; }
 .toolbar-separator { width: 1px; margin: 2px; background: var(--line); }
 .zoom-level { display: inline-grid; min-width: 52px; place-items: center; padding-right: 7px; padding-left: 7px; color: var(--muted); font-size: 11px; }
 .canvas-toolbar button:disabled { cursor: not-allowed; opacity: .38; }
 .canvas-toolbar button.active { border-color: var(--accent-2); background: #243d61; color: #dbeafe; }
-.format-toolbar, .relationship-toolbar { position: fixed; display: flex; flex-wrap: nowrap; max-width: calc(100vw - 16px); align-items: center; gap: 6px; z-index: 90; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; overflow-y: hidden; background: rgb(8 12 19 / 96%); box-shadow: 0 8px 24px rgb(0 0 0 / 35%); pointer-events: auto; white-space: nowrap; }
+/* Preserve a single visible row when both side panels leave the canvas unusually narrow. */
+@container (max-width: 520px) {
+  .canvas-toolbar { transform: scale(.8); transform-origin: top left; }
+}
+@container (max-width: 420px) {
+  .canvas-toolbar { transform: scale(.65); }
+}
+.format-toolbar, .relationship-toolbar { position: fixed; display: flex; flex-wrap: wrap; max-width: min(650px, calc(100vw - 16px)); align-items: center; gap: 6px; z-index: 90; padding: 5px 7px; border: 1px solid var(--line); border-radius: 8px; overflow: visible; background: rgb(8 12 19 / 96%); box-shadow: 0 8px 24px rgb(0 0 0 / 35%); pointer-events: auto; white-space: nowrap; }
 .format-toolbar label { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .format-toolbar input[type="color"] { width: 28px; height: 26px; padding: 2px; }
 .format-toolbar input[type="color"], .relationship-toolbar input[type="color"] { cursor: pointer; }
@@ -181,12 +190,13 @@
 .smart-guide { position: absolute; z-index: 7; background: #f59e0b; pointer-events: none; box-shadow: 0 0 0 1px rgb(245 158 11 / 25%); }
 .smart-guide.vertical { top: 0; width: 1px; height: 100%; }
 .smart-guide.horizontal { left: 0; width: 100%; height: 1px; }
-.canvas-minimap { position: fixed; right: 18px; bottom: 18px; z-index: 35; padding: 7px; border: 1px solid var(--line); border-radius: 8px; background: rgb(8 12 19 / 88%); box-shadow: 0 12px 34px rgb(0 0 0 / 36%); pointer-events: auto; user-select: none; }
+.canvas-minimap { position: fixed; right: 18px; bottom: 18px; z-index: 35; max-width: calc(100vw - 24px); padding: 7px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: rgb(8 12 19 / 88%); box-shadow: 0 12px 34px rgb(0 0 0 / 36%); pointer-events: auto; user-select: none; }
 .minimap-plane { position: relative; overflow: hidden; background: #0e1624; cursor: crosshair; touch-action: none; }
 .minimap-node { position: absolute; border-radius: 1px; background: #67e8f9; opacity: .78; }
 .minimap-viewport { position: absolute; border: 1px solid #fbbf24; background: rgb(251 191 36 / 12%); cursor: grab; }
 .minimap-plane.dragging, .minimap-plane.dragging .minimap-viewport { cursor: grabbing; }
 .canvas-overlay { position: fixed; top: 82px; left: 50%; z-index: 130; width: min(460px, calc(var(--canvas-available-width, 100vw) - 28px)); max-height: min(520px, calc(100vh - 120px)); display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgb(10 16 25 / 96%); box-shadow: 0 22px 70px rgb(0 0 0 / 48%); transform: translateX(-50%); overflow: auto; }
+.shortcut-overlay { transform: none; }
 .canvas-overlay input { width: 100%; height: 38px; padding: 7px 9px; border: 1px solid #3a4d68; border-radius: 7px; background: #0d1624; color: var(--ink); }
 .overlay-title { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .overlay-results { display: grid; gap: 4px; }
@@ -204,7 +214,7 @@
 .print-sheet > span { position: absolute; top: 10px; right: 12px; color: var(--muted); font-size: 12px; }
 .compartment-toggle { width: 16px; height: 16px; margin-right: 4px; padding: 0; border-radius: 3px; font-size: 11px; line-height: 1; vertical-align: middle; pointer-events: auto; }
 .node-compartment.collapsed { flex: 0 0 24px; min-height: 24px; padding-bottom: 0; }
-.canvas-context-menu { position: fixed; z-index: 60; display: grid; width: 206px; padding: 6px; border: 1px solid #34445d; border-radius: 9px; background: #111a28; box-shadow: 0 18px 45px rgb(0 0 0 / 50%); }
+.canvas-context-menu { position: fixed; z-index: 60; display: grid; width: min(206px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); padding: 6px; border: 1px solid #34445d; border-radius: 9px; overflow-y: auto; background: #111a28; box-shadow: 0 18px 45px rgb(0 0 0 / 50%); }
 .canvas-context-menu button { display: flex; justify-content: space-between; border: 0; padding: 8px 9px; background: transparent; text-align: left; }
 .canvas-context-menu button:hover { background: #202c43; }
 .canvas-context-menu .context-danger { color: var(--danger); }
