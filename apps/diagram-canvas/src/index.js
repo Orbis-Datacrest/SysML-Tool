@@ -1,45 +1,17 @@
 import { registerMfe } from "../../../packages/ui/src/moduleRegistry.js";
-import { elementKinds, isPaletteItemAllowed, nextRequirementId, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
+import { elementKinds, isPaletteItemAllowed, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import {
   MIN_NODE_HEIGHT, MIN_NODE_WIDTH, alignElements, autoLayoutElements, clamp, distributeElements, expandGroupedSelection,
   groupElements, moveSelection, nodesInRect, removeElements, reorderElements,
   selectionBounds, snap, snapLinesForMove, ungroupElements
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
-
-const CANVAS = { width: 5000, height: 4000 };
-const ZOOM = { minimum: 0.25, maximum: 2.5 };
-const relationshipTypes = [
-  ["association", "Association"], ["directional-association", "Directed Association"],
-  ["bidirectional-association", "Bidirectional Association"], ["dependency", "Dependency"],
-  ["generalization", "Generalization"], ["realization", "Realization"],
-  ["composition", "Composition"], ["aggregation", "Aggregation"], ["containment", "Containment"]
-  , ["note-connector", "Anchor Link"], ["link", "Link"], ["communication-path", "Communication Path"],
-  ["package-merge", "Package Merge"], ["extension", "Extension"], ["control-flow", "Control Flow"],
-  ["object-flow", "Object Flow"], ["transition", "Transition"], ["synchronous-message", "Synchronous Message"],
-  ["asynchronous-message", "Asynchronous Message"], ["return-message", "Return Message"], ["numbered-message", "Numbered Message"],
-  ["include", "Include"], ["extend", "Extend"], ["item-flow", "Item Flow"], ["binding-connector", "Binding Connector"],
-  ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
-];
-const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
-const themeNodeStyles = {
-  dark: { borderColor: "#6aaeff", fillColor: "#172033", textColor: "#f4f7fb" },
-  light: { borderColor: "#1d4ed8", fillColor: "#ffffff", textColor: "#111827" }
-};
-const lightTextKinds = new Set(["actor", "initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node", "destruction-occurrence"]);
-const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };
-const pageSizes = {
-  "letter-landscape": { label: "Letter", width: 1056, height: 816 },
-  "a4-landscape": { label: "A4", width: 1123, height: 794 },
-  "a3-landscape": { label: "A3", width: 1588, height: 1123 },
-  "engineering-d": { label: "Eng D", width: 3264, height: 2112 }
-};
-const defaultPageSize = "a3-landscape";
-const shortcutRows = [
-  ["Ctrl+A", "Select all"], ["Ctrl+C / X / V", "Copy, cut, paste"], ["Ctrl+D", "Duplicate"],
-  ["Ctrl+G", "Group"], ["Ctrl+Shift+G", "Ungroup"], ["Ctrl+F", "Search"],
-  ["?", "Keyboard help"], ["Delete", "Delete selection"], ["Space-drag", "Pan"], ["Ctrl+wheel", "Zoom"]
-];
+import {
+  CANVAS, ZOOM, compartmentDefinitions, defaultNodeStyle, defaultPageSize, defaultRelationshipStyle,
+  lightTextKinds, pageSizes, relationshipTypes, shortcutRows, simpleShapeKinds, themeNodeStyles
+} from "./config/canvasConfig.js";
+import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
+import { createNodeRenderer } from "./rendering/createNodeRenderer.js";
 
 function id(prefix) { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
 function escapeHtml(value = "") {
@@ -103,175 +75,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   };
 
   const nodeKindClass = (kind) => `node-shape-${kind.replace(/[^a-z0-9-]/g, "")}`;
-  const nodeLabel = (kind) => kind.split("-").map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`).join(" ");
-  const ellipseKinds = new Set(["use-case"]);
-  const roundedKinds = new Set(["activity", "action", "state", "composite-state", "interaction", "interaction-use"]);
-  const diamondKinds = new Set(["decision", "merge-node", "choice"]);
-  const circleKinds = new Set(["initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate"]);
-  const packageKinds = new Set(["package", "model", "profile", "view", "viewpoint"]);
-  const noteKinds = new Set(["note", "comment", "rationale", "problem"]);
-  const simpleShapeKinds = new Set([
-    "actor", "decision", "merge-node", "choice", "initial-node", "initial-state", "final-node", "final-state",
-    "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node",
-    "accept-event-action", "send-signal-action", "destruction-occurrence", "lifeline", ...packageKinds, ...noteKinds,
-    ...ellipseKinds, ...roundedKinds, "component", "object", "compact-class", "object-compact", "interface-class", "template-class",
-    "nary-association", "divider-vertical", "self-association", "frame-fragment", "callout", "text-label",
-    "symbol-braces", "symbol-guillemets"
-  ]);
-
-  const compartmentDefinitions = [
-    { key: "attributes", label: "Attributes" },
-    { key: "operations", label: "Operations" },
-    { key: "responsibilities", label: "Responsibilities" }
-  ];
-
-  function sectionEditor(node, section, value, label, displayClass = "") {
-    const tag = section === "name" ? "span" : "div";
-    return `<${tag} class="node-inline-editor compartment-editor ${section === "name" ? "name-editor" : ""} ${displayClass}" contenteditable="plaintext-only" spellcheck="true" data-node-editor="${node.id}" data-node-section="${section}" role="textbox" aria-label="Edit ${escapeHtml(label)}">${escapeHtml(value)}</${tag}>`;
-  }
-
-  function editableText(node, section, value, className, label) {
-    if (editingNode?.id === node.id && editingNode.section === section) return `<div class="${className}">${sectionEditor(node, section, value, label)}</div>`;
-    return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${escapeHtml(value)}</div>`;
-  }
-
-  function sectionValue(node, section, fallback = "") {
-    const value = node.properties?.[section];
-    if (Array.isArray(value)) return value.join("\n") || fallback;
-    return String(value ?? fallback);
-  }
-
-  function editableSection(node, section, label, className, fallback = "") {
-    const value = sectionValue(node, section, fallback);
-    if (editingNode?.id === node.id && editingNode.section === section) {
-      return `<div class="${className} editing">${sectionEditor(node, section, value, label)}</div>`;
-    }
-    const content = value ? escapeHtml(value).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${escapeHtml(label.toLowerCase())}...</span>`;
-    return `<div class="${className}" data-edit-section="${section}" title="Double-click to edit ${escapeHtml(label.toLowerCase())}">${content}</div>`;
-  }
-
-  function renderNodeContent(node) {
-    const simpleName = (className, label = `${nodeLabel(node.kind)} text`) => editableText(node, "name", node.name, className, label);
-    if (node.kind === "actor") return `<svg class="actor-figure" viewBox="0 0 100 126" aria-hidden="true"><circle cx="50" cy="20" r="17"></circle><path d="M50 37v50M18 51h64M50 87 19 123M50 87l31 36"></path></svg>${simpleName("actor-name")}`;
-    if (diamondKinds.has(node.kind)) return `<div class="diamond-shape"></div>${simpleName("shape-caption centered")}`;
-    if (circleKinds.has(node.kind)) return `<div class="circle-shape ${node.kind.startsWith("final") ? "final" : ""}"></div>${simpleName("shape-caption below")}`;
-    if (["fork-join", "fork-node", "join-node"].includes(node.kind)) return `<div class="fork-join-shape"></div>${simpleName("shape-caption below")}`;
-    if (node.kind === "accept-event-action") return `<div class="event-action-shape accept"></div>${simpleName("shape-caption centered")}`;
-    if (node.kind === "send-signal-action") return `<div class="event-action-shape send"></div>${simpleName("shape-caption centered")}`;
-    if (node.kind === "destruction-occurrence") return `<div class="destruction-shape"></div>${simpleName("shape-caption below")}`;
-    if (node.kind === "component") return `<div class="component-lugs"><span></span><span></span></div>${simpleName("component-content", "Component name")}`;
-    if (node.kind === "object") return `<div class="object-content">${simpleName("object-title", "Object name")}${editableSection(node, "attributes", "Attributes", "object-attributes", "Attributes")}</div>`;
-    if (node.kind === "compact-class") return simpleName("compact-class-content", "Class name");
-    if (node.kind === "object-compact") return simpleName("object-compact-content", "Object name");
-    if (node.kind === "interface-class") return `<div class="structured-class-content interface-class-content">
-      <div class="structured-class-title"><strong>&lt;&lt;interface&gt;&gt;</strong>${simpleName("", "Interface name")}</div>
-      ${editableSection(node, "attributes", "Attributes", "structured-class-section", "Attributes")}
-      ${editableSection(node, "operations", "Operations", "structured-class-section", "Operations")}
-      ${editableSection(node, "responsibilities", "Acting / Charge", "structured-class-section", "Acting/Charge")}
-    </div>`;
-    if (node.kind === "template-class") return `<div class="template-parameter">${editableSection(node, "templateParameter", "Template parameter", "template-parameter-text", "T")}</div><div class="structured-class-content template-class-content">
-      <div class="structured-class-title">${simpleName("", "Template class name")}</div>
-      ${editableSection(node, "attributes", "Attributes", "structured-class-section")}
-      ${editableSection(node, "operations", "Operations", "structured-class-section")}
-    </div>`;
-    if (node.kind === "nary-association") return `<div class="nary-shape"></div>${simpleName("shape-caption below", "N-ary association name")}`;
-    if (node.kind === "divider-vertical") return `<div class="divider-vertical-line"></div>${simpleName("divider-label", "Divider text")}`;
-    if (node.kind === "self-association") return `<div class="self-association-class">${simpleName("", "Class name")}</div><div class="self-association-loop"></div>${editableSection(node, "upperMultiplicity", "Upper multiplicity", "self-association-multiplicity top", "0..1")}${editableSection(node, "lowerMultiplicity", "Lower multiplicity", "self-association-multiplicity bottom", "0..*")}`;
-    if (node.kind === "frame-fragment") return `<div class="frame-fragment-corner"></div>${simpleName("frame-fragment-label", "Frame label")}`;
-    if (node.kind === "callout") return `<div class="callout-dot"></div><div class="callout-curve"></div>${simpleName("callout-text", "Callout text")}`;
-    if (node.kind === "text-label") return simpleName("text-label-content", "Text label");
-    if (node.kind === "symbol-braces") return simpleName("symbol-content", "Symbol text");
-    if (node.kind === "symbol-guillemets") return simpleName("symbol-content", "Symbol text");
-    if (node.kind === "lifeline") return `${simpleName("lifeline-head")}<div class="lifeline-line"></div>`;
-    if (packageKinds.has(node.kind)) return `<div class="package-tab"></div><div class="package-body"><strong>${simpleName("")}</strong><small>«${escapeHtml(nodeLabel(node.kind))}»</small></div>`;
-    if (noteKinds.has(node.kind)) return `<div class="note-fold"></div>${simpleName("note-content")}`;
-    if (node.kind === "requirement") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Requirement name")}<div class="node-stereotype">«requirement»</div></div>
-      <div class="node-compartments">
-        <section class="node-compartment"><span class="compartment-label">id</span><div class="compartment-content">${escapeHtml(node.properties?.requirementId ?? node.id)}</div></section>
-        <section class="node-compartment" data-edit-section="text" title="Double-click to edit requirement text"><span class="compartment-label">text</span><div class="compartment-content">${escapeHtml(node.properties?.text ?? "").replace(/\n/g, "<br>") || `<span class="compartment-placeholder">Add shall statement...</span>`}</div></section>
-        <section class="node-compartment"><span class="compartment-label">verification</span><div class="compartment-content">${escapeHtml([node.properties?.verificationMethod, node.properties?.verificationStatus].filter(Boolean).join(" / "))}</div></section>
-      </div>`;
-    if (node.kind === "interface-block" || node.kind === "interface-definition") return `<div class="node-title" data-edit-section="name">${editableText(node, "name", node.name, "node-title-text", "Interface name")}<div class="node-stereotype">«${escapeHtml(node.properties?.interfaceKind ?? "interface")} interface»</div></div>
-      <div class="node-compartments">
-        <section class="node-compartment"><span class="compartment-label">protocols</span><div class="compartment-content">${escapeHtml((node.properties?.protocols ?? []).join(", "))}</div></section>
-        <section class="node-compartment"><span class="compartment-label">signals</span><div class="compartment-content">${escapeHtml((node.properties?.signals ?? []).join(", "))}</div></section>
-        <section class="node-compartment"><span class="compartment-label">limits</span><div class="compartment-content">${escapeHtml([node.properties?.voltage ? `${node.properties.voltage} V` : "", node.properties?.current ? `${node.properties.current} A` : "", node.properties?.bandwidth ? `${node.properties.bandwidth} bps` : ""].filter(Boolean).join(" · "))}</div></section>
-      </div>`;
-    if (ellipseKinds.has(node.kind)) return simpleName("ellipse-content");
-    if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${simpleName("")}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
-    const title = editableText(node, "name", node.name, "node-title-text", "Name");
-    return `<div class="node-title" data-edit-section="name">${title}${node.locked ? `<span class="lock-indicator" title="Locked">●</span>` : ""}<div class="node-stereotype">«${escapeHtml(nodeLabel(node.kind))}»</div></div>
-      <div class="node-compartments">${compartmentDefinitions.map(({ key, label }) => {
-        const values = node.properties?.[key] ?? [];
-        const text = Array.isArray(values) ? values.join("\n") : String(values ?? "");
-        const collapsed = Boolean(node.properties?.collapsedCompartments?.[key]);
-        const toggle = `<button class="compartment-toggle" data-compartment-toggle="${node.id}" data-compartment-key="${key}" title="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(label)}">${collapsed ? "+" : "−"}</button>`;
-        if (editingNode?.id === node.id && editingNode.section === key) return `<section class="node-compartment editing">${sectionEditor(node, key, text, label)}</section>`;
-        return `<section class="node-compartment ${collapsed ? "collapsed" : ""}" data-edit-section="${key}" title="Double-click to edit ${label.toLowerCase()}"><span class="compartment-label">${toggle}${label}</span><div class="compartment-content">${collapsed ? "" : text ? escapeHtml(text).replace(/\n/g, "<br>") : `<span class="compartment-placeholder">Add ${label.toLowerCase()}…</span>`}</div></section>`;
-      }).join("")}</div>`;
-  }
-
-  function defaultSizeFor(kind) {
-    if (kind === "actor") return { width: 110, height: 170 };
-    if (kind === "compact-class") return { width: 118, height: 56 };
-    if (kind === "component") return { width: 165, height: 98 };
-    if (kind === "object") return { width: 155, height: 78 };
-    if (kind === "object-compact") return { width: 150, height: 78 };
-    if (kind === "interface-class") return { width: 180, height: 190 };
-    if (kind === "template-class") return { width: 170, height: 150 };
-    if (kind === "nary-association") return { width: 100, height: 86 };
-    if (kind === "divider-vertical") return { width: 72, height: 210 };
-    if (kind === "self-association") return { width: 220, height: 112 };
-    if (kind === "frame-fragment") return { width: 150, height: 110 };
-    if (kind === "callout") return { width: 170, height: 150 };
-    if (kind === "text-label") return { width: 120, height: 44 };
-    if (["symbol-braces", "symbol-guillemets"].includes(kind)) return { width: 98, height: 42 };
-    if (ellipseKinds.has(kind)) return { width: 160, height: 86 };
-    if (diamondKinds.has(kind)) return { width: 110, height: 90 };
-    if (circleKinds.has(kind)) return { width: 56, height: 56 };
-    if (["fork-join", "fork-node", "join-node"].includes(kind)) return { width: 150, height: 34 };
-    if (["accept-event-action", "send-signal-action"].includes(kind)) return { width: 180, height: 80 };
-    if (["input-pin", "output-pin"].includes(kind)) return { width: 54, height: 54 };
-    if (kind === "destruction-occurrence") return { width: 70, height: 70 };
-    if (kind === "lifeline") return { width: 120, height: 240 };
-    if (roundedKinds.has(kind)) return { width: 160, height: 90 };
-    if (noteKinds.has(kind)) return { width: 150, height: 110 };
-    return { width: 190, height: 170 };
-  }
-
-  function defaultNameFor(kind) {
-    const names = {
-      "compact-class": "Class",
-      "interface-class": "Class",
-      "template-class": "Template Class",
-      component: "Component Name",
-      object: ":Object",
-      "object-compact": ":Object",
-      "nary-association": "NARY",
-      "divider-vertical": "{Text}",
-      "self-association": "Class",
-      "frame-fragment": "Name",
-      callout: "Text",
-      "text-label": "Text",
-      "symbol-braces": "{ }",
-      "symbol-guillemets": "<< >>"
-    };
-    return names[kind] ?? nodeLabel(kind);
-  }
-
-  function defaultPropertiesFor(kind, diagram) {
-    if (kind === "requirement") {
-      const requirementId = nextRequirementId({ elements: diagram.elements.map((node) => ({ id: node.id, kind: node.kind, semantic: node.properties ?? {} })) });
-      return { requirementId, text: "The system shall ...", owner: "", priority: "medium", risk: "medium", approvalStatus: "draft", verificationStatus: "not-started", verificationMethod: "test", parentRequirementId: "", baseline: { id: "working", version: diagram.version ?? 1 } };
-    }
-    if (kind === "interface-block" || kind === "interface-definition") return { interfaceId: id("if"), interfaceKind: "software", signals: [], commands: [], protocols: [], pins: [], pinAssignments: {}, voltage: null, current: null, frequency: null, bandwidth: null, units: { voltage: "V", current: "A", frequency: "Hz", bandwidth: "bps" }, compatibleWith: [] };
-    if (["port", "proxy-port", "full-port"].includes(kind)) return { direction: "inout", interfaceId: "", multiplicity: "1" };
-    if (kind === "unit") return { unitSymbol: "u", quantityKind: "dimensionless", factor: 1, offset: 0, dimension: {} };
-    if (kind === "quantity-kind") return { quantityKind: "customQuantity", dimension: {} };
-    if (kind === "value-type") return { quantity: { value: 0, unit: "1", quantityKind: "dimensionless" }, quantitySchema: { unit: "1", quantityKind: "dimensionless", min: null, max: null, default: 0 } };
-    return {};
-  }
-
+  const renderNodeContent = createNodeRenderer({ getEditingNode: () => editingNode });
   function fitNodeToContent(node) {
     if (simpleShapeKinds.has(node.kind)) return;
     const sections = compartmentDefinitions.map(({ key }) => {

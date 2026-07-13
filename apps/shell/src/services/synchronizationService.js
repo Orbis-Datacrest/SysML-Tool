@@ -1,0 +1,49 @@
+export function createSynchronizationService({ api, state, bus, pollInterval = 3000 }) {
+  let timer = null;
+  let pendingPresence = null;
+  let inFlight = false;
+
+  const apply = (payload) => {
+    state.collaboration = { ...state.collaboration, ...payload, online: true };
+    bus.emit("collaboration:changed", state.collaboration);
+  };
+
+  const poll = async () => {
+    if (!state.project?.id || !state.diagram?.id || inFlight) return;
+    inFlight = true;
+    try {
+      if (pendingPresence) {
+        await api.publishPresence(state.project.id, pendingPresence);
+        pendingPresence = null;
+      }
+      apply(await api.collaborationState(state.project.id, state.diagram.id));
+    } catch (error) {
+      state.collaboration.online = false;
+      if (!String(error.message).includes("Failed to fetch")) bus.emit("toast", error.message);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  return {
+    start() {
+      clearInterval(timer);
+      timer = setInterval(poll, pollInterval);
+      poll();
+    },
+    stop() {
+      clearInterval(timer);
+      timer = null;
+    },
+    publishPresence(cursor = null, selection = state.selectedElementIds ?? []) {
+      if (!state.project?.id || !state.diagram?.id) return;
+      pendingPresence = { diagram_id: state.diagram.id, cursor, selection };
+    },
+    async addComment(input) {
+      const result = await api.createComment(state.project.id, input);
+      state.collaboration.comments = result.comments ?? [];
+      bus.emit("collaboration:changed", state.collaboration);
+    },
+    refresh: poll
+  };
+}

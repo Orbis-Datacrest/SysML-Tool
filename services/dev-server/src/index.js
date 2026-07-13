@@ -1,22 +1,16 @@
 import http from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync, createReadStream } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { applyPatch, assertBaselineMutable, compareProjectVersions, createBaseline, createId, decomposeDiagram, hydrateDiagram, restoreDiagram, restoreElement, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import { toVectorPdf } from "../../../apps/import-export/src/exporters.js";
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const configuredDataDir = process.env.DATA_DIR ?? ".data";
-const dataDir = path.isAbsolute(configuredDataDir) ? configuredDataDir : path.join(root, configuredDataDir);
-const dbPath = path.join(dataDir, process.env.SQLITE_DB_FILE ?? "sysml-studio.db");
-const port = Number(process.env.PORT ?? 8080);
-const accessTokenDays = Number(process.env.SESSION_DAYS ?? 7);
-const refreshTokenDays = Number(process.env.REFRESH_SESSION_DAYS ?? 30);
-const authWindowMs = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 15 * 60 * 1000);
-const authMaxAttempts = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10);
+import { accessTokenDays, authMaxAttempts, authWindowMs, dataDir, dbPath, port, refreshTokenDays, root } from "./config.js";
+import { addDays, encryptSecret, hashPassword, isValidEmail, makeToken, makeVerificationCode, normalizeEmail, now, tenantIdForEmail, validatePassword, verifyPassword } from "./auth/security.js";
+import { readJsonBody as body, sendJson as send } from "./http/responses.js";
+import { serveStaticFile } from "./http/staticFiles.js";
+import { migrateSchema } from "./database/migrateSchema.js";
+import { createAuthRouter } from "./routes/createAuthRouter.js";
 
 await mkdir(dataDir, { recursive: true });
 const db = new DatabaseSync(dbPath);
@@ -32,51 +26,6 @@ async function readJson(name, fallback) {
 async function writeJson(name, value) {
   await mkdir(dataDir, { recursive: true });
   await writeFile(path.join(dataDir, `${name}.json`), JSON.stringify(value, null, 2));
-}
-
-function now() {
-  return new Date().toISOString();
-}
-
-function addDays(days) {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-}
-
-function normalizeEmail(email) {
-  return String(email ?? "").trim().toLowerCase();
-}
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function validatePassword(password) {
-  if (String(password ?? "").length < 8) return "Password must be at least 8 characters.";
-  return "";
-}
-
-function hashPassword(password, salt = crypto.randomBytes(16).toString("base64url")) {
-  const hash = crypto.scryptSync(password, salt, 64).toString("base64url");
-  return { salt, hash };
-}
-
-function verifyPassword(password, user) {
-  if (!user?.password_hash || !user?.password_salt) return false;
-  const candidate = crypto.scryptSync(password, user.password_salt, 64);
-  const stored = Buffer.from(user.password_hash, "base64url");
-  return stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate);
-}
-
-function makeVerificationCode() {
-  return String(crypto.randomInt(100000, 1000000));
-}
-
-function makeToken() {
-  return crypto.randomBytes(32).toString("base64url");
-}
-
-function tenantIdForEmail(email) {
-  return `tenant_${crypto.createHash("sha1").update(email).digest("hex").slice(0, 12)}`;
 }
 
 function json(value, fallback = {}) {
@@ -116,292 +65,6 @@ function saveUserSettings(userId, settings) {
     ON CONFLICT(user_id) DO UPDATE SET theme = excluded.theme, updated_at = excluded.updated_at
   `).run(userId, theme, now());
   return getUserSettings(userId);
-}
-
-function migrateSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      tenant_id TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'Owner',
-      password_hash TEXT,
-      password_salt TEXT,
-      created_at TEXT NOT NULL,
-      verified_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS tenants (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      owner_user_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS tenant_members (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT,
-      email TEXT NOT NULL,
-      role TEXT NOT NULL,
-      invited_by TEXT,
-      accepted_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(tenant_id, email)
-    );
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS recent_projects (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      opened_at TEXT NOT NULL,
-      UNIQUE(user_id, project_id)
-    );
-    CREATE TABLE IF NOT EXISTS project_shares (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      email TEXT NOT NULL,
-      role TEXT NOT NULL,
-      invited_by TEXT,
-      accepted_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(project_id, email)
-    );
-    CREATE TABLE IF NOT EXISTS project_snapshots (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      description TEXT NOT NULL,
-      snapshot TEXT NOT NULL,
-      created_by TEXT,
-      created_at TEXT NOT NULL,
-      UNIQUE(project_id, version)
-    );
-    CREATE TABLE IF NOT EXISTS project_baselines (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      snapshot_id TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'draft',
-      released INTEGER NOT NULL DEFAULT 0,
-      created_by TEXT,
-      created_at TEXT NOT NULL,
-      released_by TEXT,
-      released_at TEXT,
-      UNIQUE(project_id, name)
-    );
-    CREATE TABLE IF NOT EXISTS project_reviews (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      baseline_id TEXT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'open',
-      created_by TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS review_approvals (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      review_id TEXT NOT NULL,
-      actor_id TEXT NOT NULL,
-      decision TEXT NOT NULL,
-      comment TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS collaboration_presence (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      diagram_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL,
-      cursor TEXT NOT NULL DEFAULT '{}',
-      selection TEXT NOT NULL DEFAULT '[]',
-      color TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(project_id, diagram_id, user_id)
-    );
-    CREATE TABLE IF NOT EXISTS collaboration_comments (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      diagram_id TEXT NOT NULL,
-      anchor_type TEXT NOT NULL,
-      anchor_id TEXT NOT NULL,
-      parent_id TEXT,
-      body TEXT NOT NULL,
-      mentions TEXT NOT NULL DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'open',
-      created_by TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS notifications (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      user_id TEXT,
-      type TEXT NOT NULL,
-      message TEXT NOT NULL,
-      read_at TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS audit_records (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      actor_id TEXT,
-      action TEXT NOT NULL,
-      resource_type TEXT NOT NULL,
-      resource_id TEXT NOT NULL,
-      description TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      metadata TEXT NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE IF NOT EXISTS diagrams (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      name TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      metadata TEXT NOT NULL DEFAULT '{}',
-      elements TEXT NOT NULL DEFAULT '[]',
-      relationships TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE IF NOT EXISTS model_elements (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      name TEXT NOT NULL,
-      owner_id TEXT,
-      package_id TEXT,
-      semantic TEXT NOT NULL DEFAULT '{}',
-      stereotypes TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS model_elements_project_idx ON model_elements(tenant_id, project_id);
-    CREATE TABLE IF NOT EXISTS model_relationships (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      target_id TEXT NOT NULL,
-      label TEXT NOT NULL DEFAULT '',
-      semantic TEXT NOT NULL DEFAULT '{}',
-      stereotypes TEXT NOT NULL DEFAULT '[]',
-      validation TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS model_relationships_project_idx ON model_relationships(tenant_id, project_id);
-    CREATE TABLE IF NOT EXISTS diagram_views (
-      diagram_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      schema_version INTEGER NOT NULL,
-      element_refs TEXT NOT NULL DEFAULT '[]',
-      relationship_refs TEXT NOT NULL DEFAULT '[]',
-      viewport TEXT NOT NULL DEFAULT '{}',
-      display TEXT NOT NULL DEFAULT '{}',
-      metadata TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      access_token TEXT NOT NULL UNIQUE,
-      refresh_token TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      refresh_expires_at TEXT NOT NULL,
-      revoked_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS auth_challenges (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL,
-      code TEXT NOT NULL,
-      purpose TEXT NOT NULL,
-      password_hash TEXT,
-      password_salt TEXT,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS rate_limits (
-      key TEXT PRIMARY KEY,
-      count INTEGER NOT NULL,
-      reset_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS password_resets (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL,
-      code TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      password_salt TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS events (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      diagram_id TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      actor_id TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      patch TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS ai_keys (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      encrypted_api_key TEXT NOT NULL,
-      active INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS email_outbox (
-      id TEXT PRIMARY KEY,
-      recipient TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      text TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      status TEXT NOT NULL,
-      error TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS user_settings (
-      user_id TEXT PRIMARY KEY,
-      theme TEXT NOT NULL DEFAULT 'dark',
-      updated_at TEXT NOT NULL
-    );
-  `);
 }
 
 function diagramFromRow(row) {
@@ -993,27 +656,6 @@ function requireUser(req, res) {
   return context;
 }
 
-function send(res, status, payload, headers = {}) {
-  res.writeHead(status, { "content-type": "application/json", ...headers });
-  res.end(JSON.stringify(payload));
-}
-
-async function body(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  const text = Buffer.concat(chunks).toString("utf8");
-  return text ? JSON.parse(text) : {};
-}
-
-function encryptSecret(secret) {
-  const master = crypto.createHash("sha256").update(process.env.API_KEY_ENCRYPTION_SECRET ?? "local-dev-secret").digest();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", master, iv);
-  const encrypted = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString("base64")}.${tag.toString("base64")}.${encrypted.toString("base64")}`;
-}
-
 function recordEvent(diagram, patch, actor = "local-user", reason = "diagram update") {
   db.prepare(`
     INSERT INTO events (id, tenant_id, project_id, diagram_id, version, actor_id, reason, created_at, patch)
@@ -1053,132 +695,17 @@ function bootstrap(tenantId) {
   };
 }
 
+const handleAuthRoute = createAuthRouter({
+  accessTokenDays, addDays, authContext, body, createId, createSession, db, ensureUserWorkspace,
+  getUserByEmail, getUserById, hashPassword, isValidEmail, makeToken, makeVerificationCode,
+  normalizeEmail, now, publicUser, rateLimit, send, sendPasswordResetEmail, sendVerificationEmail,
+  tenantIdForEmail, upsertUser, validatePassword, verifyPassword
+});
+
 async function api(req, res, urlOrPath) {
   const pathname = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
   const searchParams = typeof urlOrPath === "string" ? new URLSearchParams() : urlOrPath.searchParams;
-  if (pathname === "/api/auth/request-code" && req.method === "POST") {
-    const limited = rateLimit(req, "auth-code");
-    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
-    const input = await body(req);
-    const email = normalizeEmail(input.email);
-    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
-    const wantsPassword = input.password !== undefined;
-    let passwordCredential = {};
-    if (wantsPassword) {
-      const passwordError = validatePassword(input.password);
-      if (passwordError) return send(res, 422, { error: passwordError });
-      const { salt, hash } = hashPassword(input.password);
-      passwordCredential = { password_salt: salt, password_hash: hash };
-    }
-    db.prepare("DELETE FROM auth_challenges WHERE expires_at <= ?").run(now());
-    const challenge = { id: createId("challenge"), email, code: makeVerificationCode(), purpose: wantsPassword ? "password_signup" : "email_login", expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), created_at: now(), ...passwordCredential };
-    db.prepare(`
-      INSERT INTO auth_challenges (id, email, code, purpose, password_hash, password_salt, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(challenge.id, challenge.email, challenge.code, challenge.purpose, challenge.password_hash ?? null, challenge.password_salt ?? null, challenge.expires_at, challenge.created_at);
-    await sendVerificationEmail(email, challenge.code);
-    return send(res, 200, { ok: true, message: "Verification code sent.", dev_code: process.env.NODE_ENV === "production" ? undefined : challenge.code });
-  }
-
-  if (pathname === "/api/auth/verify" && req.method === "POST") {
-    const limited = rateLimit(req, "auth-verify");
-    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
-    const input = await body(req);
-    const email = normalizeEmail(input.email);
-    const code = String(input.code ?? "").trim();
-    const challenge = db.prepare("SELECT * FROM auth_challenges WHERE email = ? AND code = ? AND expires_at > ?").get(email, code, now());
-    if (!challenge) return send(res, 401, { error: "Invalid or expired verification code." });
-
-    const timestamp = now();
-    let user = getUserByEmail(email);
-    if (!user) {
-      const invite = db.prepare("SELECT * FROM tenant_members WHERE email = ? ORDER BY created_at LIMIT 1").get(email);
-      user = {
-        id: createId("user"),
-        email,
-        tenant_id: invite?.tenant_id ?? tenantIdForEmail(email),
-        role: invite?.role ?? "Owner",
-        created_at: timestamp,
-        verified_at: timestamp,
-        password_hash: challenge.password_hash,
-        password_salt: challenge.password_salt
-      };
-    } else {
-      user = { ...user, verified_at: timestamp, password_hash: challenge.password_hash ?? user.password_hash, password_salt: challenge.password_salt ?? user.password_salt };
-    }
-    upsertUser(user);
-    db.prepare("DELETE FROM auth_challenges WHERE id = ?").run(challenge.id);
-    ensureUserWorkspace(user);
-    const session = createSession(user);
-    return send(res, 200, { token: session.access_token, refreshToken: session.refresh_token, expires_at: session.expires_at, user: publicUser(user) });
-  }
-
-  if (pathname === "/api/auth/password-login" && req.method === "POST") {
-    const limited = rateLimit(req, "password-login");
-    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
-    const input = await body(req);
-    const user = getUserByEmail(input.email);
-    if (!user || !verifyPassword(input.password ?? "", user)) return send(res, 401, { error: "Email or password is incorrect." });
-    ensureUserWorkspace(user);
-    const session = createSession(user);
-    return send(res, 200, { token: session.access_token, refreshToken: session.refresh_token, expires_at: session.expires_at, user: publicUser(user) });
-  }
-
-  if (pathname === "/api/auth/request-password-reset" && req.method === "POST") {
-    const limited = rateLimit(req, "password-reset");
-    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
-    const input = await body(req);
-    const email = normalizeEmail(input.email);
-    const passwordError = validatePassword(input.password);
-    if (!isValidEmail(email)) return send(res, 422, { error: "Enter a valid email address." });
-    if (passwordError) return send(res, 422, { error: passwordError });
-    const user = getUserByEmail(email);
-    if (user) {
-      const { salt, hash } = hashPassword(input.password);
-      const reset = { id: createId("reset"), email, code: makeVerificationCode(), password_hash: hash, password_salt: salt, expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), created_at: now() };
-      db.prepare("INSERT INTO password_resets (id, email, code, password_hash, password_salt, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(reset.id, reset.email, reset.code, reset.password_hash, reset.password_salt, reset.expires_at, reset.created_at);
-      await sendPasswordResetEmail(email, reset.code);
-    }
-    return send(res, 200, { ok: true, message: "If that email exists, a reset code has been sent." });
-  }
-
-  if (pathname === "/api/auth/confirm-password-reset" && req.method === "POST") {
-    const limited = rateLimit(req, "password-reset-confirm");
-    if (limited) return send(res, 429, limited, { "retry-after": String(limited.retryAfter) });
-    const input = await body(req);
-    const email = normalizeEmail(input.email);
-    const code = String(input.code ?? "").trim();
-    const reset = db.prepare("SELECT * FROM password_resets WHERE email = ? AND code = ? AND expires_at > ?").get(email, code, now());
-    if (!reset) return send(res, 401, { error: "Invalid or expired reset code." });
-    db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE email = ?").run(reset.password_hash, reset.password_salt, email);
-    db.prepare("DELETE FROM password_resets WHERE id = ?").run(reset.id);
-    return send(res, 200, { ok: true });
-  }
-
-  if (pathname === "/api/auth/refresh" && req.method === "POST") {
-    const input = await body(req);
-    const refreshToken = String(input.refreshToken ?? "");
-    const session = db.prepare("SELECT * FROM sessions WHERE refresh_token = ? AND revoked_at IS NULL").get(refreshToken);
-    if (!session || new Date(session.refresh_expires_at) <= new Date()) return send(res, 401, { error: "Refresh session expired." });
-    const accessToken = makeToken();
-    const expiresAt = addDays(accessTokenDays);
-    db.prepare("UPDATE sessions SET access_token = ?, expires_at = ? WHERE id = ?").run(accessToken, expiresAt, session.id);
-    const user = getUserById(session.user_id);
-    return send(res, 200, { token: accessToken, refreshToken, expires_at: expiresAt, user: publicUser(user) });
-  }
-
-  if (pathname === "/api/auth/me" && req.method === "GET") {
-    const { user } = authContext(req);
-    return send(res, 200, { user: publicUser(user) });
-  }
-
-  if (pathname === "/api/auth/logout" && req.method === "POST") {
-    const header = req.headers.authorization ?? "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-    db.prepare("UPDATE sessions SET revoked_at = ? WHERE access_token = ?").run(now(), token);
-    return send(res, 200, { ok: true });
-  }
-
+  if (pathname.startsWith("/api/auth/")) return handleAuthRoute(req, res, pathname);
   const { user, tenantId } = authContext(req);
   if (pathname === "/api/bootstrap" && req.method === "GET") return send(res, 200, bootstrap(tenantId));
 
@@ -1627,28 +1154,7 @@ async function api(req, res, urlOrPath) {
   return send(res, 404, { error: "Not found" });
 }
 
-function contentType(file) {
-  if (file.endsWith(".html")) return "text/html";
-  if (file.endsWith(".css")) return "text/css";
-  if (file.endsWith(".js")) return "text/javascript";
-  if (file.endsWith(".json")) return "application/json";
-  return "application/octet-stream";
-}
-
-async function serveStatic(req, res, pathname) {
-  const publicRoot = path.join(root, "apps/shell/public");
-  const filePath = pathname === "/" ? path.join(publicRoot, "index.html") : path.join(root, pathname);
-  const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(root) || !existsSync(resolved)) {
-    res.writeHead(404);
-    res.end("Not found");
-    return;
-  }
-  res.writeHead(200, { "content-type": contentType(resolved) });
-  createReadStream(resolved).pipe(res);
-}
-
-migrateSchema();
+migrateSchema(db);
 await migrateJsonData();
 migrateLegacyDiagrams();
 
@@ -1656,7 +1162,7 @@ http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) return await api(req, res, url);
-    return await serveStatic(req, res, url.pathname);
+    return await serveStaticFile({ root, res, pathname: url.pathname });
   } catch (error) {
     console.error(error);
     send(res, 500, { error: error.message });
