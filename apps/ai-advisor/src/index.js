@@ -42,6 +42,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
     });
     element.querySelector("#discard")?.addEventListener("click", () => { preview = null; render(); });
   }
-  bus.on("diagram:changed", render);
+  const unsubscribe = bus.on("diagram:changed", render);
   render();
+  return unsubscribe;
 });

@@ -26,10 +26,19 @@ export function createInitialState(storage = localStorage, media = window.matchM
     selectedElementIds: [],
     selectedRelationshipId: null,
     canvasViewport: { zoom: 1, scrollLeft: 0, scrollTop: 0 },
-    relationshipKind: "association",
+    selectedTool: { type: "select", kind: null, label: "" },
     saveStatus: "",
     shareDraft: { email: "", role: "Viewer" },
     history: [],
     future: []
   };
+}
+
+export function resetEditorInteractionState(state) {
+  state.selectedElementIds = [];
+  state.selectedRelationshipId = null;
+  state.selectedTool = { type: "select", kind: null, label: "" };
+  state.canvasViewport = { zoom: 1, scrollLeft: 0, scrollTop: 0 };
+  state.history = [];
+  state.future = [];
 }

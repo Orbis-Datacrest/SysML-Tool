@@ -197,11 +197,13 @@ registerMfe("project-import", (element, { state, bus, setDiagram }) => {
       const previousFuture = [...state.future];
       const previousElementSelection = [...state.selectedElementIds];
       const previousRelationshipSelection = state.selectedRelationshipId;
+      const previousSelectedTool = structuredClone(state.selectedTool);
       const localIdentity = { id: state.diagram.id, project_id: state.diagram.project_id, tenant_id: state.diagram.tenant_id };
       try {
         if (imported.viewport) state.canvasViewport = imported.viewport;
         state.selectedElementIds = [];
         state.selectedRelationshipId = null;
+        state.selectedTool = { type: "select", kind: null, label: "" };
         setDiagram({ ...imported.diagram, ...localIdentity });
       } catch (error) {
         state.diagram = previousDiagram;
@@ -210,6 +212,7 @@ registerMfe("project-import", (element, { state, bus, setDiagram }) => {
         state.future = previousFuture;
         state.selectedElementIds = previousElementSelection;
         state.selectedRelationshipId = previousRelationshipSelection;
+        state.selectedTool = previousSelectedTool;
         bus.emit("diagram:changed", previousDiagram);
         throw error;
       }

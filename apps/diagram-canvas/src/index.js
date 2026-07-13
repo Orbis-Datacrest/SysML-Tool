@@ -51,13 +51,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let editingNode = null;
   let pointerDrag = null;
   let minimapDrag = null;
-  let zoomRenderTimer = null;
+  let renderFrame = null;
+  let viewportFrame = null;
   let lastNodePress = null;
   let clipboard = [];
   let pasteOffset = 0;
   let spaceHeld = false;
-  let activeRelationshipKind = null;
-  let activeRelationshipLabel = null;
   let gridSize = state.diagram?.metadata?.gridSize ?? state.diagram?.metadata?.grid ?? 20;
   let showGrid = state.diagram?.metadata?.showGrid ?? true;
   let snapGuides = [];
@@ -69,6 +68,17 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
+
+  const scheduleRender = () => {
+    if (renderFrame !== null) return;
+    renderFrame = requestAnimationFrame(() => {
+      renderFrame = null;
+      render();
+    });
+  };
+  const clearSelectedTool = () => {
+    state.selectedTool = { type: "select", kind: null, label: "" };
+  };
 
   // Keep every help entry point on one state transition so click, keyboard, and outside dismissal stay in sync.
   function setShortcutHelpOpen(open) {
@@ -404,7 +414,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function render() {
-    if (zoomRenderTimer !== null) { clearTimeout(zoomRenderTimer); zoomRenderTimer = null; }
+    if (renderFrame !== null) {
+      cancelAnimationFrame(renderFrame);
+      renderFrame = null;
+    }
     const diagram = state.diagram;
     if (!diagram) return;
     runtimeStyles.clear();
@@ -485,8 +498,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     positionFormattingToolbar();
     syncMinimapViewport();
     runtimeStyles.commit();
-    clearTimeout(zoomRenderTimer);
-    zoomRenderTimer = setTimeout(() => { zoomRenderTimer = null; render(); }, 120);
+    scheduleRender();
   }
 
   function syncMinimapViewport() {
@@ -505,7 +517,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const scroll = canvasScrollFromMinimap({ canvas: CANVAS, minimap: { width: rect.width, height: rect.height }, viewport: { width: viewport.offsetWidth, height: viewport.offsetHeight }, position: { left: event.clientX - rect.left - minimapDrag.offsetX, top: event.clientY - rect.top - minimapDrag.offsetY }, zoom });
     element.scrollLeft = scroll.left;
     element.scrollTop = scroll.top;
-    syncMinimapViewport();
   }
 
   function stopMinimapDrag(event) {
@@ -542,12 +553,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       minimap.classList.add("dragging");
       moveCanvasFromMinimap(event);
     });
-    minimap?.addEventListener("pointermove", (event) => {
-      if (!minimapDrag || event.pointerId !== minimapDrag.pointerId) return;
-      event.preventDefault(); event.stopPropagation(); moveCanvasFromMinimap(event);
-    });
-    minimap?.addEventListener("pointerup", stopMinimapDrag);
-    minimap?.addEventListener("pointercancel", stopMinimapDrag);
     minimap?.addEventListener("keydown", (event) => {
       const step = event.shiftKey ? 240 : 60;
       const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
@@ -569,7 +574,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       event.preventDefault(); event.stopPropagation();
       const source = state.diagram.elements.find((node) => node.id === handle.dataset.handle);
       const sourceAnchor = { side: handle.dataset.side, offset: 0.5 }; const start = anchorPoint(source, sourceAnchor);
-      connectDrag = { sourceId: source.id, sourceAnchor, kind: activeRelationshipKind ?? "directional-association", label: activeRelationshipLabel ?? "", start, x2: start.x, y2: start.y };
+      const selectedTool = state.selectedTool?.type === "relationship" ? state.selectedTool : null;
+      connectDrag = { sourceId: source.id, sourceAnchor, kind: selectedTool?.kind ?? "directional-association", label: selectedTool?.label ?? "", start, x2: start.x, y2: start.y };
       gesture = null; contextMenu = null; relationshipToolbar = null; setSelection([source.id]);
     }));
     element.querySelectorAll("[data-route-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
@@ -878,19 +884,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const start = pointOnCanvas(event);
     gesture = { type: "marquee", start, rect: { left: start.x, top: start.y, right: start.x, bottom: start.y }, additive: event.shiftKey, baseSelection: event.shiftKey ? [...selectedIds()] : [] };
     if (!event.shiftKey) setSelection([]); else render();
-  });
+  }, { signal: lifecycle.signal });
   element.addEventListener("wheel", (event) => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
     setZoom(zoom * Math.exp(-clamp(pixels, -120, 120) * 0.0015), event.clientX, event.clientY);
-  }, { passive: false });
+  }, { passive: false, signal: lifecycle.signal });
   element.addEventListener("input", (event) => {
     const input = event.target.closest("input[type='color']");
     if (!input) return;
     event.stopPropagation();
     previewColor(input);
-  });
+  }, { signal: lifecycle.signal });
   element.addEventListener("change", (event) => {
     const input = event.target.closest("[data-style],[data-relationship-style]");
     if (!input) return;
@@ -901,18 +907,24 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       applyStyle(input.dataset.style, input.type === "color" ? input.value : numeric ? Number(input.value) : input.value);
     }
     if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, input.value);
-  });
+  }, { signal: lifecycle.signal });
   element.addEventListener("focusout", (event) => {
     const input = event.target.closest?.("input[type='color']");
     if (input) commitColor(input);
-  });
+  }, { signal: lifecycle.signal });
   element.addEventListener("scroll", () => {
-    state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
-    positionFormattingToolbar(); syncMinimapViewport();
-  }, { passive: true });
+    if (viewportFrame !== null) return;
+    viewportFrame = requestAnimationFrame(() => {
+      viewportFrame = null;
+      state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
+      positionFormattingToolbar();
+      syncMinimapViewport();
+      runtimeStyles.commit();
+    });
+  }, { passive: true, signal: lifecycle.signal });
   element.addEventListener("contextmenu", (event) => {
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
-  });
+  }, { signal: lifecycle.signal });
   window.addEventListener("pointerdown", (event) => {
     if (!shortcutHelpOpen || event.target.closest?.("#keyboard-help,.shortcut-overlay")) return;
     // Capture dismissal before canvas pointer handlers can replace the clicked DOM during a render.
@@ -928,12 +940,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     render();
   }, { signal: lifecycle.signal });
   // Native browser drags (text, links, images, files, and UI fragments) never create model elements.
-  element.addEventListener("dragenter", (event) => event.preventDefault());
+  element.addEventListener("dragenter", (event) => event.preventDefault(), { signal: lifecycle.signal });
   element.addEventListener("dragover", (event) => {
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
-  });
-  element.addEventListener("dragleave", (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove("drag-target-active"); });
+  }, { signal: lifecycle.signal });
+  element.addEventListener("dragleave", (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove("drag-target-active"); }, { signal: lifecycle.signal });
   function placePaletteElement(kind, clientX, clientY) {
     if (!elementKinds.includes(kind) || !state.diagram) return false;
     const rect = element.getBoundingClientRect();
@@ -951,7 +963,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     event.preventDefault();
     event.stopPropagation();
     element.classList.remove("drag-target-active");
-  });
+  }, { signal: lifecycle.signal });
 
   window.addEventListener("pointermove", (event) => {
     if (minimapDrag) {
@@ -967,7 +979,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         return;
       }
     }
-    if (connectDrag) { const point = pointOnCanvas(event); connectDrag.x2 = point.x; connectDrag.y2 = point.y; render(); return; }
+    if (connectDrag) { const point = pointOnCanvas(event); connectDrag.x2 = point.x; connectDrag.y2 = point.y; scheduleRender(); return; }
     const hoverPoint = pointOnCanvas(event);
     const currentTime = performance.now();
     if (currentTime - lastPresenceSent > 250 && element.matches(":hover")) {
@@ -987,7 +999,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (gesture.type === "marquee") {
       gesture.rect = { left: Math.min(gesture.start.x, point.x), top: Math.min(gesture.start.y, point.y), right: Math.max(gesture.start.x, point.x), bottom: Math.max(gesture.start.y, point.y) };
       const hits = expandGroupedSelection(state.diagram.elements, nodesInRect(state.diagram.elements, gesture.rect));
-      state.selectedElementIds = gesture.additive ? [...new Set([...gesture.baseSelection, ...hits])] : hits; render(); return;
+      state.selectedElementIds = gesture.additive ? [...new Set([...gesture.baseSelection, ...hits])] : hits; scheduleRender(); return;
     }
     const next = structuredClone(state.diagram); const dx = point.x - gesture.start.x; const dy = point.y - gesture.start.y;
     if (gesture.type === "move") {
@@ -1005,7 +1017,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     gesture.changed = true;
     state.diagram = next;
     // Keep pointer movement local to the canvas; publishing on every pixel forces every panel to rerender.
-    render();
+    scheduleRender();
   }, { signal: lifecycle.signal });
 
   window.addEventListener("pointerup", (event) => {
@@ -1028,7 +1040,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         if (validation.status === "invalid") bus.emit("toast", validation.diagnostics[0] ?? "Incompatible connection");
         else {
           mutate((next) => { next.relationships.push(candidate); state.selectedRelationshipId = candidate.id; state.selectedElementIds = []; });
-          activeRelationshipKind = null; activeRelationshipLabel = null;
+          clearSelectedTool();
         }
       }
       connectDrag = null; render(); return;
@@ -1047,7 +1059,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         delete relationship.waypoints; state.diagram = completed; completedGesture.changed = true;
       }
     }
-    if (completedGesture.type === "marquee") selectionFrame = selectedIds().length > 1 ? { ...completedGesture.rect } : null;
+    if (completedGesture.type === "marquee") {
+      selectionFrame = selectedIds().length > 1 ? { ...completedGesture.rect } : null;
+      bus.emit("selection:changed", selectedIds());
+    }
     if (completedGesture.changed && completedGesture.diagramBefore) {
       const completed = structuredClone(state.diagram);
       state.diagram = completedGesture.diagramBefore;
@@ -1101,7 +1116,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       return;
     }
     if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
-    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; activeRelationshipKind = null; activeRelationshipLabel = null; searchOpen = false; shortcutHelpOpen = false; printPreviewOpen = false; render(); }
+    if (event.key === "Escape") { gesture = null; connectDrag = null; contextMenu = null; relationshipToolbar = null; clearSelectedTool(); searchOpen = false; shortcutHelpOpen = false; printPreviewOpen = false; render(); }
   }, { signal: lifecycle.signal });
   window.addEventListener("keyup", (event) => { if (event.code === "Space") { spaceHeld = false; element.classList.remove("pan-ready"); } }, { signal: lifecycle.signal });
 
@@ -1116,10 +1131,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       viewportResizeFrame = null;
       render();
     });
-  });
+  }, { signal: lifecycle.signal });
 
   subscriptions.push(bus.on("diagram:changed", () => {
-    if (activeRelationshipKind && !isPaletteItemAllowed(state.diagram?.type, "relationship", activeRelationshipKind)) { activeRelationshipKind = null; activeRelationshipLabel = null; }
+    if (state.selectedTool?.type === "relationship" && !isPaletteItemAllowed(state.diagram?.type, "relationship", state.selectedTool.kind)) clearSelectedTool();
     // Imports replace viewport state before this event so zoom and scroll are restored with the diagram.
     const importedViewport = state.canvasViewport;
     if (Number.isFinite(importedViewport?.zoom)) zoom = clamp(importedViewport.zoom, ZOOM.minimum, ZOOM.maximum);
@@ -1130,32 +1145,33 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       syncMinimapViewport();
     }
   }));
-  subscriptions.push(bus.on("selection:changed", render));
+  subscriptions.push(bus.on("selection:changed", scheduleRender));
+  subscriptions.push(bus.on("theme:changed", scheduleRender));
   subscriptions.push(bus.on("ui:menu-open", (menu) => {
     if (menu === "help" || !shortcutHelpOpen) return;
     shortcutHelpOpen = false;
     render();
   }));
-  subscriptions.push(bus.on("palette:hover", (detail) => { paletteHover = detail; render(); }));
-  subscriptions.push(bus.on("palette:dragstart", () => { paletteHover = null; pointerDrag = null; render(); }));
+  subscriptions.push(bus.on("palette:hover", (detail) => { paletteHover = detail; scheduleRender(); }));
+  subscriptions.push(bus.on("palette:dragstart", () => { paletteHover = null; pointerDrag = null; scheduleRender(); }));
   subscriptions.push(bus.on("palette:pointermove", (detail) => {
     const rect = element.getBoundingClientRect();
     const inside = detail.clientX >= rect.left && detail.clientX <= rect.right && detail.clientY >= rect.top && detail.clientY <= rect.bottom;
     element.classList.toggle("drag-target-active", inside);
     paletteHover = null;
     pointerDrag = detail;
-    render();
+    scheduleRender();
   }));
   subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, label, clientX, clientY }) => {
     const rect = element.getBoundingClientRect();
     const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     if (inside && isPaletteItemAllowed(state.diagram?.type, type, kind)) {
       if (type === "node") placePaletteElement(kind, clientX, clientY);
-      if (type === "relationship") { activeRelationshipKind = kind; activeRelationshipLabel = label; setSelection([]); }
+      if (type === "relationship") { state.selectedTool = { type, kind, label }; setSelection([]); }
     }
-    pointerDrag = null; render();
+    pointerDrag = null; scheduleRender();
   }));
-  subscriptions.push(bus.on("palette:dragend", () => { pointerDrag = null; element.classList.remove("drag-target-active"); render(); }));
+  subscriptions.push(bus.on("palette:dragend", () => { pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender(); }));
   subscriptions.push(bus.on("model:focus", (modelId) => {
     const node = state.diagram?.elements.find((item) => (item.model_element_id ?? item.id) === modelId);
     if (!node) return;
@@ -1175,7 +1191,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
     lifecycle.abort();
     subscriptions.splice(0).forEach((unsubscribe) => unsubscribe());
-    if (zoomRenderTimer !== null) clearTimeout(zoomRenderTimer);
+    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
+    if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
     if (viewportResizeFrame !== null) cancelAnimationFrame(viewportResizeFrame);
     runtimeStyles.destroy();
   };

@@ -87,7 +87,8 @@ registerMfe("properties-panel", (element, { state, setDiagram, bus }) => {
       control.addEventListener("pointerdown", (event) => event.stopPropagation());
     });
   }
-  bus.on("diagram:changed", render);
-  bus.on("selection:changed", render);
+  const unsubscribeDiagram = bus.on("diagram:changed", render);
+  const unsubscribeSelection = bus.on("selection:changed", render);
   render();
+  return () => { unsubscribeDiagram(); unsubscribeSelection(); };
 });

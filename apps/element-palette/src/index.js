@@ -93,6 +93,7 @@ function paletteItems(items) {
 }
 
 registerMfe("element-palette", (element, { state, bus }) => {
+  const lifecycle = new AbortController();
   let pointerDragging = false;
   function render() {
     const diagramType = diagramCatalog.find((item) => item.value === state.diagram?.type) ?? diagramCatalog[0];
@@ -133,12 +134,19 @@ registerMfe("element-palette", (element, { state, bus }) => {
           bus.emit("palette:dragend");
           bus.emit("palette:hover", null);
         };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
-        window.addEventListener("pointercancel", up);
+        window.addEventListener("pointermove", move, { signal: lifecycle.signal });
+        window.addEventListener("pointerup", up, { signal: lifecycle.signal });
+        window.addEventListener("pointercancel", up, { signal: lifecycle.signal });
       });
     });
   }
-  bus.on("diagram:changed", render);
+  const unsubscribe = bus.on("diagram:changed", render);
   render();
+  return () => {
+    lifecycle.abort();
+    unsubscribe();
+    pointerDragging = false;
+    bus.emit("palette:dragend");
+    bus.emit("palette:hover", null);
+  };
 });

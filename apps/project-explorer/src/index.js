@@ -26,8 +26,9 @@ registerMfe("project-explorer", (element, { state, bus, setDiagram }) => {
     });
   }
 
-  bus.on("diagram:changed", render);
+  const unsubscribe = bus.on("diagram:changed", render);
   render();
+  return unsubscribe;
 });
 
 registerMfe("project-validation", (element, { state, bus }) => {
@@ -58,7 +59,8 @@ registerMfe("project-validation", (element, { state, bus }) => {
     element.querySelectorAll("[data-diagnostic-id]").forEach((button) => button.addEventListener("click", () => focusDiagnostic(button.dataset.diagnosticId, button.dataset.diagnosticType)));
   }
 
-  bus.on("diagram:changed", render);
-  bus.on("repository:changed", render);
+  const unsubscribeDiagram = bus.on("diagram:changed", render);
+  const unsubscribeRepository = bus.on("repository:changed", render);
   render();
+  return () => { unsubscribeDiagram(); unsubscribeRepository(); };
 });

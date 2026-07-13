@@ -1,5 +1,5 @@
 import { createEventBus, mountMfe } from "/packages/ui/src/moduleRegistry.js";
-import { createInitialState } from "./app/state.js";
+import { createInitialState, resetEditorInteractionState } from "./app/state.js";
 import { applyTheme, dashboardUrl, escapeHtml, projectUrl, rememberPage as persistPage } from "./app/browser.js";
 import { createApiClient } from "./api/apiClient.js";
 import { createSynchronizationService } from "./services/synchronizationService.js";
@@ -213,11 +213,7 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   state.diagrams = data.diagrams ?? [];
   state.diagram = state.diagrams[0] ?? null;
   state.modelRepository = repositoryFromDiagrams(state.diagrams);
-  state.selectedElementIds = [];
-  state.selectedRelationshipId = null;
-  state.canvasViewport = { zoom: 1, scrollLeft: 0, scrollTop: 0 };
-  state.history = [];
-  state.future = [];
+  resetEditorInteractionState(state);
   state.selectedHistoryVersion = "current";
   state.view = "editor";
   rememberPage("editor", projectId);

@@ -120,6 +120,7 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
     });
   }
 
-  bus.on("auth:changed", load);
+  const unsubscribe = bus.on("auth:changed", load);
   load();
+  return unsubscribe;
 });

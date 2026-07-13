@@ -1,4 +1,5 @@
 import { clampSidebarWidth, nextRightPanelState, persistSidebarLayout, SIDEBAR_CONSTRAINTS } from "../app/sidebarLayout.js";
+import { resetEditorInteractionState } from "../app/state.js";
 import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js";
 
 export function createShellRenderer({
@@ -7,6 +8,8 @@ export function createShellRenderer({
 }) {
 let cleanupSidebarInteractions = () => {};
 let cleanupMountedModules = () => {};
+let themeRequestVersion = 0;
+let rightPanelRequestVersion = 0;
 function renderShell() {
   cleanupSidebarInteractions();
   cleanupMountedModules();
@@ -164,12 +167,14 @@ function renderShell() {
     notifyCanvasResize();
   };
   const toggleSidebar = (side) => {
+    if (side === "right") rightPanelRequestVersion += 1;
     state.sidebarLayout[side].open = !state.sidebarLayout[side].open;
     applySidebarLayout();
   };
   document.querySelector("#sidebar-toggle")?.addEventListener("click", () => toggleSidebar("left"));
   document.querySelector("#right-sidebar-collapse")?.addEventListener("click", () => toggleSidebar("right"));
   const activateRightPanel = async (panel) => {
+    const requestVersion = ++rightPanelRequestVersion;
     const next = nextRightPanelState(state.sidebarLayout.right, state.rightPanel, panel);
     if (!next.open) {
       state.sidebarLayout.right.open = next.open;
@@ -178,6 +183,7 @@ function renderShell() {
     }
     if (panel === "history") {
       await loadVersionHistory();
+      if (requestVersion !== rightPanelRequestVersion) return;
       const selectedExists = state.versionHistory.some((item) => String(item.version) === String(state.selectedHistoryVersion));
       if (state.selectedHistoryVersion !== "current" && !selectedExists) state.selectedHistoryVersion = "current";
     }
@@ -189,7 +195,12 @@ function renderShell() {
   document.querySelector("#history-toggle")?.addEventListener("click", () => activateRightPanel("history").catch((error) => bus.emit("toast", error.message)));
 
   let stopActiveResize = () => {};
+  let sidebarResizeFrame = null;
+  let pendingResizeClientX = null;
   const stopResize = (handle, pointerId) => {
+    if (sidebarResizeFrame !== null) cancelAnimationFrame(sidebarResizeFrame);
+    sidebarResizeFrame = null;
+    pendingResizeClientX = null;
     document.removeEventListener("pointermove", handle._sidebarPointerMove);
     document.removeEventListener("pointerup", handle._sidebarPointerUp);
     document.removeEventListener("pointercancel", handle._sidebarPointerUp);
@@ -213,12 +224,26 @@ function renderShell() {
       document.documentElement.classList.add("sidebar-resizing");
       handle._sidebarPointerMove = (moveEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
-        const delta = (moveEvent.clientX - startX) * (side === "left" ? 1 : -1);
-        state.sidebarLayout[side].width = clampSidebarWidth(side, startWidth + delta, workspace.getBoundingClientRect().width, state.sidebarLayout);
-        applySidebarLayout({ persist: false });
+        pendingResizeClientX = moveEvent.clientX;
+        if (sidebarResizeFrame !== null) return;
+        sidebarResizeFrame = requestAnimationFrame(() => {
+          sidebarResizeFrame = null;
+          const delta = (pendingResizeClientX - startX) * (side === "left" ? 1 : -1);
+          pendingResizeClientX = null;
+          state.sidebarLayout[side].width = clampSidebarWidth(side, startWidth + delta, workspace.getBoundingClientRect().width, state.sidebarLayout);
+          applySidebarLayout({ persist: false });
+        });
       };
       handle._sidebarPointerUp = (endEvent) => {
         if (endEvent.pointerId !== pointerId) return;
+        if (sidebarResizeFrame !== null) {
+          cancelAnimationFrame(sidebarResizeFrame);
+          sidebarResizeFrame = null;
+          const delta = (pendingResizeClientX - startX) * (side === "left" ? 1 : -1);
+          pendingResizeClientX = null;
+          state.sidebarLayout[side].width = clampSidebarWidth(side, startWidth + delta, workspace.getBoundingClientRect().width, state.sidebarLayout);
+          applySidebarLayout({ persist: false });
+        }
         stopResize(handle, pointerId);
         persistSidebarLayout(state.sidebarLayout);
       };
@@ -237,19 +262,31 @@ function renderShell() {
       applySidebarLayout();
     });
   });
-  const handleWorkspaceResize = () => applySidebarLayout({ persist: false });
+  let workspaceResizeFrame = null;
+  const handleWorkspaceResize = () => {
+    if (workspaceResizeFrame !== null) return;
+    workspaceResizeFrame = requestAnimationFrame(() => {
+      workspaceResizeFrame = null;
+      applySidebarLayout({ persist: false });
+    });
+  };
   const workspaceObserver = workspace && typeof ResizeObserver === "function" ? new ResizeObserver(handleWorkspaceResize) : null;
   if (workspaceObserver) workspaceObserver.observe(workspace);
   else if (workspace) window.addEventListener("resize", handleWorkspaceResize, { passive: true });
   const closeRightPanelOnOutsidePointer = (event) => {
     if (!state.sidebarLayout.right.open) return;
     if (event.target.closest?.("#ai-advisor-sidebar,#ai-sidebar-toggle,#history-toggle")) return;
+    rightPanelRequestVersion += 1;
     state.sidebarLayout.right.open = false;
     applySidebarLayout();
   };
   document.addEventListener("pointerdown", closeRightPanelOnOutsidePointer, true);
   cleanupSidebarInteractions = () => {
     stopActiveResize();
+    if (sidebarResizeFrame !== null) cancelAnimationFrame(sidebarResizeFrame);
+    sidebarResizeFrame = null;
+    if (workspaceResizeFrame !== null) cancelAnimationFrame(workspaceResizeFrame);
+    workspaceResizeFrame = null;
     workspaceObserver?.disconnect();
     window.removeEventListener("resize", handleWorkspaceResize);
     document.removeEventListener("pointerdown", closeRightPanelOnOutsidePointer, true);
@@ -265,14 +302,25 @@ function renderShell() {
     applySidebarLayout();
   });
   document.querySelector("#theme-toggle")?.addEventListener("click", async () => {
-    state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
-    applyTheme(state.settings.theme);
-    // Re-render immediately so mounted tools and the toggle icon change before remote persistence finishes.
-    renderShell();
+    const requestedTheme = state.settings.theme === "dark" ? "light" : "dark";
+    const requestVersion = ++themeRequestVersion;
+    state.settings.theme = requestedTheme;
+    applyTheme(requestedTheme);
+    const toggle = document.querySelector("#theme-toggle");
+    if (toggle) {
+      toggle.innerHTML = requestedTheme === "dark" ? icons.moon : icons.sun;
+      toggle.title = `Toggle ${requestedTheme === "dark" ? "Light" : "Dark"} Mode`;
+      toggle.setAttribute("aria-label", toggle.title);
+    }
+    bus.emit("theme:changed", requestedTheme);
     if (state.user) {
-      const result = await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme: state.settings.theme }) });
-      state.settings = result.settings;
-      applyTheme(state.settings.theme);
+      try {
+        const result = await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme: requestedTheme }) });
+        if (requestVersion !== themeRequestVersion || state.settings.theme !== requestedTheme) return;
+        state.settings = { ...state.settings, ...result.settings, theme: requestedTheme };
+      } catch (error) {
+        if (requestVersion === themeRequestVersion) bus.emit("toast", `Theme preference was not saved: ${error.message}`);
+      }
     }
   });
   const sharePopover = document.querySelector("#share-popover");
@@ -337,7 +385,20 @@ function renderShell() {
   });
   document.querySelectorAll("[data-history-version]").forEach((button) => button.addEventListener("click", () => {
     state.selectedHistoryVersion = button.dataset.historyVersion === "current" ? "current" : Number(button.dataset.historyVersion);
-    renderShell();
+    document.querySelectorAll("[data-history-version]").forEach((card) => {
+      const selected = String(card.dataset.historyVersion) === String(state.selectedHistoryVersion);
+      card.classList.toggle("selected", selected);
+      card.setAttribute("aria-selected", String(selected));
+      card.querySelector(".selected-state-badge")?.remove();
+      if (selected && card.dataset.historyVersion !== "current") {
+        const badge = document.createElement("span");
+        badge.className = "selected-state-badge";
+        badge.textContent = "Selected";
+        card.append(badge);
+      }
+    });
+    const restore = document.querySelector("#restore-selected-version");
+    if (restore) restore.disabled = state.selectedHistoryVersion === "current";
   }));
   document.querySelector("#refresh-history")?.addEventListener("click", async () => {
     try { await loadVersionHistory(); renderShell(); }
@@ -352,11 +413,7 @@ function renderShell() {
       state.project = result.project;
       state.diagrams = result.diagrams ?? [];
       state.diagram = state.diagrams[0] ?? null;
-      state.selectedElementIds = [];
-      state.selectedRelationshipId = null;
-      state.history = [];
-      state.future = [];
-      state.canvasViewport = { zoom: 1, scrollLeft: 0, scrollTop: 0 };
+      resetEditorInteractionState(state);
       state.selectedHistoryVersion = "current";
       await loadVersionHistory();
       renderShell();
