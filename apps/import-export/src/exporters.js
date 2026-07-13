@@ -1,4 +1,5 @@
 import { pointAlongRoute, relationshipRoute, routeToPath } from "../../diagram-canvas/src/connector-routing.js";
+import { parseProjectSnapshot, serializeProjectSnapshot } from "./projectFormat.js";
 
 const xml = (value = "") => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]);
 const pdfText = (value = "") => String(value).replace(/[^\x20-\x7e]/g, "?").replace(/[\\()]/g, "\\$&");
@@ -101,9 +102,9 @@ export function toVectorPdf(diagram) {
 
 export const exporters = new Map([
   ["svg", { extension: "svg", mime: "image/svg+xml", serialize: toSvg }], ["plantuml", { extension: "puml", mime: "text/plain", serialize: toPlantUml }],
-  ["json", { extension: "json", mime: "application/json", serialize: (diagram, context) => JSON.stringify({ schemaVersion: 2, project: context.project, diagram }, null, 2) }],
+  ["json", { extension: "json", mime: "application/json", serialize: serializeProjectSnapshot }],
   ["csv", { extension: "csv", mime: "text/csv;charset=utf-8", serialize: toRequirementsCsv }], ["xlsx", { extension: "xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", serialize: toRequirementsXlsx }],
   ["pdf", { extension: "pdf", mime: "application/pdf", serialize: toVectorPdf }]
 ]);
 
-export const importers = new Map([["json", { parse: (text) => { const value = JSON.parse(text); return value.diagram ?? value; } }]]);
+export const importers = new Map([["json", { parse: parseProjectSnapshot }]]);

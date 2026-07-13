@@ -1,4 +1,5 @@
 import { createSidebarLayout } from "./sidebarLayout.js";
+import { normalizeTheme } from "./browser.js";
 
 export function createInitialState(storage = localStorage, media = window.matchMedia.bind(window)) {
   return {
@@ -17,7 +18,7 @@ export function createInitialState(storage = localStorage, media = window.matchM
     reviews: [],
     versionCompare: { from: "", to: "", diff: null },
     collaboration: { role: "Owner", permissions: [], presence: [], comments: [], notifications: [], online: false },
-    settings: { theme: storage.getItem("sysml.theme") ?? "dark" },
+    settings: { theme: normalizeTheme(storage.getItem("sysml.theme")) },
     project: null,
     diagram: null,
     diagrams: [],

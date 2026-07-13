@@ -117,20 +117,25 @@ registerMfe("element-palette", (element, { state, bus }) => {
         const origin = { x: event.clientX, y: event.clientY };
         let dragging = false;
         const move = (pointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) return;
           if (!dragging && Math.hypot(pointerEvent.clientX - origin.x, pointerEvent.clientY - origin.y) < 4) return;
           if (!dragging) { dragging = true; pointerDragging = true; bus.emit("palette:dragstart", button.dataset.kind); }
           bus.emit("palette:pointermove", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY, preview: elementPreview(item.shape ?? item.kind) });
         };
+        const pointerId = event.pointerId;
         const up = (pointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) return;
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
-          if (dragging) bus.emit("palette:pointerdrop", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY });
+          window.removeEventListener("pointercancel", up);
+          if (dragging && pointerEvent.type === "pointerup") bus.emit("palette:pointerdrop", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY });
           pointerDragging = false;
           bus.emit("palette:dragend");
           bus.emit("palette:hover", null);
         };
         window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up, { once: true });
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", up);
       });
     });
   }

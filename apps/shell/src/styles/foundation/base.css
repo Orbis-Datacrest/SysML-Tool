@@ -1,6 +1,7 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Semantic tokens are the single source of truth for both the shell and mounted tools. */
   --bg: #0b1018;
   --panel: #111827;
   --panel-2: #0f1724;
@@ -15,6 +16,47 @@
   --canvas: #121a27;
   --node: #d7eadb;
   --node-ink: #102016;
+  --surface-control: #182235;
+  --surface-control-hover: #202c43;
+  --surface-input: #0d1624;
+  --surface-elevated: #111a28;
+  --surface-toolbar: rgb(8 12 19 / 92%);
+  --surface-overlay: rgb(10 16 25 / 96%);
+  --surface-accent-soft: #243d61;
+  --border-strong: #3a4d68;
+  --border-hover: #526279;
+  --ink-on-accent: #061410;
+  --ink-on-brand: #061410;
+  --ink-inverse: #f4f7fb;
+  --topbar-bg: #080c13;
+  --topbar-ink: #ffffff;
+  --topbar-muted: #aab7ca;
+  --accent-soft: #b9d8ff;
+  --accent-bright: #87f7d4;
+  --success: #4ade80;
+  --success-strong: #22c55e;
+  --info: #60a5fa;
+  --danger-surface: #351821;
+  --danger-surface-hover: #4a202a;
+  --danger-border: #74313a;
+  --danger-ink: #ffd2d2;
+  --warning-surface: #221b0d;
+  --warning-border: #8b6d2b;
+  --warning-ink: #ffd98a;
+  --backdrop: rgb(3 7 13 / 68%);
+  --shadow-color: rgb(0 0 0 / 42%);
+  --focus-ring: rgb(90 167 255 / 18%);
+  --grid-line: #1c2636;
+  --relationship-label: #c5d0df;
+  --scrollbar-thumb: #3a4a62;
+  --scrollbar-track: #0d1420;
+  --minimap-bg: #0e1624;
+  --minimap-node: #67e8f9;
+  --node-border-default: #6aaeff;
+  --relationship-default: #9aa8bb;
+  --comment-surface: #f5b84b;
+  --comment-ink: #1f1300;
+  --collaboration-ink: #061018;
   /* Shared geometry keeps shell chrome and mounted tools on one sizing rhythm. */
   --topbar-height: 48px;
   --control-height: 34px;
@@ -34,32 +76,78 @@
   --line: #c3cfdd;
   --ink: #111827;
   --muted: #475569;
-  --accent: #0f8f83;
+  --accent: #087a70;
   --accent-2: #1d4ed8;
   --danger: #dc2626;
   --warning: #a16207;
   --canvas: #f8fafc;
   --node: #e7f7ec;
   --node-ink: #102016;
+  --surface-control: #f8fafc;
+  --surface-control-hover: #e2e8f0;
+  --surface-input: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-toolbar: rgb(255 255 255 / 94%);
+  --surface-overlay: rgb(255 255 255 / 97%);
+  --surface-accent-soft: #dbeafe;
+  --border-strong: #94a3b8;
+  --border-hover: #64748b;
+  --ink-on-accent: #ffffff;
+  --ink-on-brand: #06201b;
+  --ink-inverse: #0f172a;
+  --topbar-bg: #ffffff;
+  --topbar-ink: #111827;
+  --topbar-muted: #475569;
+  --accent-soft: #1e3a8a;
+  --accent-bright: #0f8f83;
+  --success: #15803d;
+  --success-strong: #16a34a;
+  --info: #2563eb;
+  --danger-surface: #fff1f2;
+  --danger-surface-hover: #ffe4e6;
+  --danger-border: #fda4af;
+  --danger-ink: #991b1b;
+  --warning-surface: #fef9c3;
+  --warning-border: #eab308;
+  --warning-ink: #713f12;
+  --backdrop: rgb(15 23 42 / 55%);
+  --shadow-color: rgb(15 23 42 / 24%);
+  --focus-ring: rgb(29 78 216 / 18%);
+  --grid-line: #dbe3ec;
+  --relationship-label: #334155;
+  --scrollbar-thumb: #94a3b8;
+  --scrollbar-track: #e2e8f0;
+  --minimap-bg: #e8eef5;
+  --minimap-node: #0369a1;
+  --node-border-default: #1d4ed8;
+  --relationship-default: #526173;
+  --comment-surface: #a16207;
+  --comment-ink: #ffffff;
+  --collaboration-ink: #061018;
 }
 
 * { box-sizing: border-box; }
 html, body { min-width: 0; min-height: 100%; }
-body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); }
+body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 #app { min-width: 0; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 img, svg { max-width: 100%; }
 :focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
 button, input, select, textarea { font: inherit; }
+input, select, textarea { max-width: 100%; }
+input[type="color"] { padding: 2px; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--surface-input); appearance: auto; }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
+input[type="color"]::-moz-color-swatch { border: 0; border-radius: 3px; }
 button, input, select { min-height: var(--control-height); }
-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--line); background: #182235; color: var(--ink); border-radius: var(--control-radius); padding: 6px 10px; cursor: pointer; line-height: 1.2; }
-button:hover { border-color: #3c4d68; background: #202c43; }
+button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--line); background: var(--surface-control); color: var(--ink); border-radius: var(--control-radius); padding: 6px 10px; cursor: pointer; line-height: 1.2; }
+button:hover { border-color: var(--border-hover); background: var(--surface-control-hover); }
 button:disabled { cursor: not-allowed; opacity: .5; }
-button.primary { background: var(--accent); color: white; border-color: var(--accent); }
-button.danger { border-color: #74313a; color: #ffd2d2; background: #351821; }
-button.danger:hover { background: #4a202a; border-color: var(--danger); }
-:root[data-theme="light"] button { background: #f8fafc; color: #111827; border-color: #c3cfdd; }
-:root[data-theme="light"] button:hover { background: #e2e8f0; border-color: #94a3b8; color: #0f172a; }
-:root[data-theme="light"] button.primary { background: #0f8f83; color: #ffffff; border-color: #0f8f83; }
-:root[data-theme="light"] button.primary:hover { background: #0b756c; border-color: #0b756c; color: #ffffff; }
-:root[data-theme="light"] button.danger { background: #fff1f2; color: #b91c1c; border-color: #fecdd3; }
-:root[data-theme="light"] button.danger:hover { background: #ffe4e6; color: #991b1b; border-color: #fda4af; }
+button.primary { background: var(--accent); color: var(--ink-on-accent); border-color: var(--accent); }
+button.primary:hover { background: color-mix(in srgb, var(--accent), #000 16%); border-color: color-mix(in srgb, var(--accent), #000 16%); }
+button.danger { border-color: var(--danger-border); color: var(--danger-ink); background: var(--danger-surface); }
+button.danger:hover { background: var(--danger-surface-hover); border-color: var(--danger); }
+
+/* Chromium and Safari use pseudo-elements for scrollbars; Firefox uses scrollbar-color above. */
+.sidebar-content::-webkit-scrollbar, .canvas-host::-webkit-scrollbar, .chat-log::-webkit-scrollbar { width: 11px; height: 11px; }
+.sidebar-content::-webkit-scrollbar-track, .canvas-host::-webkit-scrollbar-track, .chat-log::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+.sidebar-content::-webkit-scrollbar-thumb, .canvas-host::-webkit-scrollbar-thumb, .chat-log::-webkit-scrollbar-thumb { border: 3px solid var(--scrollbar-track); border-radius: 999px; background: var(--scrollbar-thumb); }

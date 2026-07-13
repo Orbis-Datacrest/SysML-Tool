@@ -1,4 +1,5 @@
 import { clampSidebarWidth, nextRightPanelState, persistSidebarLayout, SIDEBAR_CONSTRAINTS } from "../app/sidebarLayout.js";
+import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js";
 
 export function createShellRenderer({
   api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
@@ -24,8 +25,8 @@ function renderShell() {
         <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
         ${state.view === "editor" ? `<div class="share-control">
           <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing" aria-haspopup="dialog" aria-expanded="false"><span class="share-lock" aria-hidden="true">${icons.share}</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
-          <div id="share-popover" class="share-popover" hidden>
-            <div class="share-popover-header"><div><strong>Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
+          <div id="share-popover" class="share-popover" role="dialog" aria-modal="false" aria-labelledby="share-popover-title" hidden>
+            <div class="share-popover-header"><div><strong id="share-popover-title">Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
             <form id="share-form">
               <label for="share-email">Invite by email</label>
               <div class="share-invite-row"><input id="share-email" type="email" autocomplete="email" value="${escapeHtml(state.shareDraft.email)}" placeholder="name@example.com" required><select id="share-role" aria-label="Access level"><option value="Viewer" ${state.shareDraft.role === "Viewer" ? "selected" : ""}>Viewer</option><option value="Commenter" ${state.shareDraft.role === "Commenter" ? "selected" : ""}>Commenter</option><option value="Editor" ${state.shareDraft.role === "Editor" ? "selected" : ""}>Editor</option></select></div>
@@ -35,7 +36,7 @@ function renderShell() {
             <button id="copy-project-link" class="copy-project-link" type="button">Copy project link</button>
           </div>
         </div>` : ""}
-        <section id="topbar-import-export" class="topbar-export"></section>
+        <section id="topbar-project-export" class="topbar-export"></section>
         ${state.view === "dashboard" ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
     </header>
@@ -45,9 +46,9 @@ function renderShell() {
           <div class="sidebar-header"><button id="sidebar-toggle" class="sidebar-toggle" title="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-content" aria-expanded="${state.sidebarLayout.left.open}">☰</button><strong>Project tools</strong></div>
           <div id="project-tools-content" class="sidebar-content">
             <section id="project-explorer"></section>
+            <section id="project-import" class="project-import"></section>
             <section id="element-palette"></section>
             <section id="properties-panel"></section>
-            <section id="drawer-import-export" class="drawer-import-export"></section>
             <section id="project-validation" class="sidebar-bottom-panel"></section>
           </div>
           <section id="left-account" class="left-account" aria-label="Signed in account"></section>
@@ -81,9 +82,20 @@ function renderShell() {
   `;
   // Sidebar widths are live application state, so apply them after rendering instead of embedding presentation in the markup.
   const workspace = document.querySelector(".workspace");
+  const layoutStyles = workspace ? createScopedStyles(workspace, "workspace-layout") : null;
+  const setWorkspaceWidths = (leftWidth, rightWidth) => {
+    if (!layoutStyles) return;
+    layoutStyles.set("sidebar-widths", "&", {
+      "--left-sidebar-width": `${leftWidth}px`,
+      "--right-sidebar-width": `${rightWidth}px`
+    });
+    layoutStyles.commit();
+  };
   if (workspace) {
-    workspace.style.setProperty("--left-sidebar-width", `${state.sidebarLayout.left.open ? state.sidebarLayout.left.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px`);
-    workspace.style.setProperty("--right-sidebar-width", `${state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth}px`);
+    setWorkspaceWidths(
+      state.sidebarLayout.left.open ? state.sidebarLayout.left.width : SIDEBAR_CONSTRAINTS.collapsedWidth,
+      state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth
+    );
   }
   const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram };
   const moduleCleanups = [];
@@ -100,8 +112,8 @@ function renderShell() {
     mount("project-validation", document.querySelector("#project-validation"));
     mount("diagram-canvas", document.querySelector("#diagram-canvas"));
     if (state.rightPanel === "advisor") mount("ai-advisor", document.querySelector("#ai-advisor"));
-    mount("import-export", document.querySelector("#topbar-import-export"));
-    mount("import-export", document.querySelector("#drawer-import-export"));
+    mount("project-export", document.querySelector("#topbar-project-export"));
+    mount("project-import", document.querySelector("#project-import"));
     if (state.settingsOpen) mount("auth-tenant-settings", document.querySelector("#auth-tenant-settings"));
     mount("auth-session", document.querySelector("#left-account"));
   }
@@ -121,10 +133,11 @@ function renderShell() {
   const applySidebarLayout = ({ persist = true } = {}) => {
     if (!workspace) return;
     const workspaceWidth = workspace.getBoundingClientRect().width;
+    const renderedWidths = {};
     for (const side of ["left", "right"]) {
       if (state.sidebarLayout[side].open) state.sidebarLayout[side].width = clampSidebarWidth(side, state.sidebarLayout[side].width, workspaceWidth, state.sidebarLayout);
       const width = state.sidebarLayout[side].open ? state.sidebarLayout[side].width : SIDEBAR_CONSTRAINTS.collapsedWidth;
-      workspace.style.setProperty(`--${side}-sidebar-width`, `${width}px`);
+      renderedWidths[side] = width;
       workspace.classList.toggle(`${side}-open`, state.sidebarLayout[side].open);
       const rail = document.querySelector(side === "left" ? "#project-tools-sidebar" : "#ai-advisor-sidebar");
       rail.dataset.open = String(state.sidebarLayout[side].open);
@@ -146,6 +159,7 @@ function renderShell() {
         if (collapse) collapse.textContent = state.sidebarLayout.right.open ? "×" : "‹";
       }
     }
+    setWorkspaceWidths(renderedWidths.left, renderedWidths.right);
     if (persist) persistSidebarLayout(state.sidebarLayout);
     notifyCanvasResize();
   };
@@ -176,10 +190,12 @@ function renderShell() {
 
   let stopActiveResize = () => {};
   const stopResize = (handle, pointerId) => {
-    handle.removeEventListener("pointermove", handle._sidebarPointerMove);
-    handle.removeEventListener("pointerup", handle._sidebarPointerUp);
-    handle.removeEventListener("pointercancel", handle._sidebarPointerUp);
-    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    document.removeEventListener("pointermove", handle._sidebarPointerMove);
+    document.removeEventListener("pointerup", handle._sidebarPointerUp);
+    document.removeEventListener("pointercancel", handle._sidebarPointerUp);
+    try {
+      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    } catch { /* Pointer capture can disappear when Safari replaces a dragged element. */ }
     document.documentElement.classList.remove("sidebar-resizing");
     stopActiveResize = () => {};
   };
@@ -193,7 +209,7 @@ function renderShell() {
       const pointerId = event.pointerId;
       const startX = event.clientX;
       const startWidth = state.sidebarLayout[side].width;
-      handle.setPointerCapture(pointerId);
+      try { handle.setPointerCapture?.(pointerId); } catch { /* Document listeners below are the cross-browser fallback. */ }
       document.documentElement.classList.add("sidebar-resizing");
       handle._sidebarPointerMove = (moveEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
@@ -206,9 +222,10 @@ function renderShell() {
         stopResize(handle, pointerId);
         persistSidebarLayout(state.sidebarLayout);
       };
-      handle.addEventListener("pointermove", handle._sidebarPointerMove);
-      handle.addEventListener("pointerup", handle._sidebarPointerUp);
-      handle.addEventListener("pointercancel", handle._sidebarPointerUp);
+      // Document-level listeners keep resizing active if capture is unavailable or the pointer leaves the thin handle.
+      document.addEventListener("pointermove", handle._sidebarPointerMove);
+      document.addEventListener("pointerup", handle._sidebarPointerUp);
+      document.addEventListener("pointercancel", handle._sidebarPointerUp);
       stopActiveResize = () => stopResize(handle, pointerId);
     });
     handle.addEventListener("keydown", (event) => {
@@ -220,8 +237,10 @@ function renderShell() {
       applySidebarLayout();
     });
   });
-  const workspaceObserver = workspace && typeof ResizeObserver === "function" ? new ResizeObserver(() => applySidebarLayout({ persist: false })) : null;
+  const handleWorkspaceResize = () => applySidebarLayout({ persist: false });
+  const workspaceObserver = workspace && typeof ResizeObserver === "function" ? new ResizeObserver(handleWorkspaceResize) : null;
   if (workspaceObserver) workspaceObserver.observe(workspace);
+  else if (workspace) window.addEventListener("resize", handleWorkspaceResize, { passive: true });
   const closeRightPanelOnOutsidePointer = (event) => {
     if (!state.sidebarLayout.right.open) return;
     if (event.target.closest?.("#ai-advisor-sidebar,#ai-sidebar-toggle,#history-toggle")) return;
@@ -232,7 +251,9 @@ function renderShell() {
   cleanupSidebarInteractions = () => {
     stopActiveResize();
     workspaceObserver?.disconnect();
+    window.removeEventListener("resize", handleWorkspaceResize);
     document.removeEventListener("pointerdown", closeRightPanelOnOutsidePointer, true);
+    layoutStyles?.destroy();
   };
   document.querySelector("#settings-toggle")?.addEventListener("click", () => {
     state.settingsOpen = !state.settingsOpen;
@@ -246,12 +267,13 @@ function renderShell() {
   document.querySelector("#theme-toggle")?.addEventListener("click", async () => {
     state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
     applyTheme(state.settings.theme);
+    // Re-render immediately so mounted tools and the toggle icon change before remote persistence finishes.
+    renderShell();
     if (state.user) {
       const result = await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme: state.settings.theme }) });
       state.settings = result.settings;
       applyTheme(state.settings.theme);
     }
-    renderShell();
   });
   const sharePopover = document.querySelector("#share-popover");
   const shareButton = document.querySelector("#share-project");
@@ -295,7 +317,7 @@ function renderShell() {
       });
       state.shareDraft.email = "";
       document.querySelector("#share-email").value = "";
-      sharePopover.hidden = true;
+      setShareOpen(false);
       bus.emit("toast", "Project invitation sent");
     } catch (error) {
       bus.emit("toast", error.message);

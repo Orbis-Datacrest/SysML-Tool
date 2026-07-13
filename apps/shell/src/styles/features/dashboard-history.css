@@ -1,9 +1,9 @@
 .workspace { --left-sidebar-width: 36px; --right-sidebar-width: 36px; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, var(--left-sidebar-width)) minmax(0, 1fr) minmax(0, var(--right-sidebar-width)); overflow: hidden; isolation: isolate; }
-.dashboard-host { min-width: 0; min-height: 0; overflow: auto; background: radial-gradient(circle at top left, rgb(57 184 168 / 12%), transparent 34%), var(--bg); }
+.dashboard-host { min-width: 0; min-height: 0; overflow: auto; background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent), transparent 88%), transparent 34%), var(--bg); }
 .app-boot { display: grid; min-height: 100vh; place-content: center; justify-items: center; gap: 14px; background: var(--bg); color: var(--muted); font-size: 13px; }
-.boot-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #87f7d4); color: #061410; font-size: 22px; font-weight: 900; box-shadow: 0 12px 34px rgb(0 0 0 / 24%); }
+.boot-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-bright)); color: var(--ink-on-brand); font-size: 22px; font-weight: 900; box-shadow: 0 12px 34px var(--shadow-color); }
 .dashboard-shell { width: min(1120px, calc(100vw - 48px)); margin: 0 auto; padding: 34px 0 52px; }
-.dashboard-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(135deg, var(--panel), var(--panel-2)); box-shadow: 0 24px 70px rgb(0 0 0 / 18%); }
+.dashboard-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(135deg, var(--panel), var(--panel-2)); box-shadow: 0 24px 70px color-mix(in srgb, var(--shadow-color), transparent 55%); }
 .dashboard-hero h1 { margin: 4px 0 8px; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.04em; }
 .eyebrow { margin: 0; color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .14em; font-weight: 800; }
 .dashboard-new { min-width: 170px; height: 44px; font-weight: 800; }
@@ -19,9 +19,9 @@
 .recent-list { display: grid; gap: 8px; }
 .recent-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; text-align: left; background: var(--panel); }
 .dashboard-empty, .dashboard-error { margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--muted); }
-.dashboard-error { border-color: #74313a; color: #ffd2d2; background: #351821; }
-.history-backdrop { position: fixed; inset: var(--topbar-height) 0 0; z-index: 110; display: flex; justify-content: flex-end; background: rgb(3 7 13 / 45%); backdrop-filter: blur(3px); }
-.history-drawer { width: min(390px, 100vw); height: calc(100dvh - var(--topbar-height)); border-left: 1px solid var(--line); background: var(--panel); box-shadow: -24px 0 60px rgb(0 0 0 / 35%); overflow: auto; }
+.dashboard-error { border-color: var(--danger-border); color: var(--danger-ink); background: var(--danger-surface); }
+.history-backdrop { position: fixed; inset: var(--topbar-height) 0 0; z-index: 110; display: flex; justify-content: flex-end; background: var(--backdrop); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.history-drawer { width: min(390px, 100vw); height: calc(100vh - var(--topbar-height)); height: calc(100dvh - var(--topbar-height)); border-left: 1px solid var(--line); background: var(--panel); box-shadow: -24px 0 60px var(--shadow-color); overflow: auto; -webkit-overflow-scrolling: touch; }
 .history-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .history-header h2 { margin: 4px 0 0; font-size: 18px; }
 .history-header button { width: 34px; height: 34px; padding: 0; border-radius: 999px; font-size: 20px; }
@@ -34,14 +34,14 @@
 .history-form.compact { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; padding: 0; border: 0; background: transparent; }
 .history-form input, .history-form select { min-width: 0; height: 36px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 .checkbox-row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.baseline-state { justify-self: start; margin-left: 6px; padding: 2px 6px; border: 1px solid #3f8f67; border-radius: 999px; color: #86efac; font-size: 10px; text-transform: uppercase; }
-.baseline-state.draft { border-color: #64748b; color: var(--muted); }
+.baseline-state { justify-self: start; margin-left: 6px; padding: 2px 6px; border: 1px solid var(--success-strong); border-radius: 999px; color: var(--success); font-size: 10px; text-transform: uppercase; }
+.baseline-state.draft { border-color: var(--border-hover); color: var(--muted); }
 .diff-panel { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
 .diff-panel section { display: grid; gap: 5px; }
 .diff-panel strong { color: var(--accent-2); font-size: 12px; text-transform: capitalize; }
 .diff-row { display: grid; gap: 2px; padding: 7px; border-left: 3px solid var(--accent-2); background: color-mix(in srgb, var(--panel-3), transparent 34%); font-size: 12px; }
-.diff-row.added { border-left-color: #22c55e; }
-.diff-row.removed { border-left-color: #ef4444; }
+.diff-row.added { border-left-color: var(--success-strong); }
+.diff-row.removed { border-left-color: var(--danger); }
 .diff-row small, .audit-row small, .comment-card small { color: var(--muted); overflow-wrap: anywhere; }
 .collab-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .collab-summary span { display: grid; min-height: 34px; place-items: center; margin: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--ink); font-size: 11px; font-weight: 750; }
@@ -50,14 +50,14 @@
 .history-sidebar-summary { display: grid; gap: 4px; padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .history-sidebar-summary > div { display: flex; align-items: center; gap: 8px; }
 .history-sidebar-summary small, .history-state-card small { color: var(--muted); font-size: 11px; line-height: 1.4; }
-.history-state-dot { width: 9px; height: 9px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgb(34 197 94 / 14%); }
+.history-state-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--success-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-strong), transparent 86%); }
 .history-state-list { min-height: 0; display: grid; align-content: start; gap: 8px; padding: 12px; overflow: auto; }
 .history-state-card { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px; border-color: var(--line); background: var(--panel); text-align: left; }
 .history-state-card > span:first-child { min-width: 0; display: grid; gap: 4px; }
 .history-state-card small { overflow: hidden; text-overflow: ellipsis; }
-.history-state-card.selected { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2), var(--panel) 88%); box-shadow: 0 0 0 2px rgb(90 167 255 / 10%); }
+.history-state-card.selected { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2), var(--panel) 88%); box-shadow: 0 0 0 2px var(--focus-ring); }
 .current-state-badge, .selected-state-badge { padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 850; text-transform: uppercase; letter-spacing: .05em; }
-.current-state-badge { background: rgb(34 197 94 / 16%); color: #4ade80; }
-.selected-state-badge { background: rgb(90 167 255 / 16%); color: var(--accent-2); }
+.current-state-badge { background: color-mix(in srgb, var(--success-strong), transparent 84%); color: var(--success); }
+.selected-state-badge { background: color-mix(in srgb, var(--accent-2), transparent 84%); color: var(--accent-2); }
 .history-empty { margin: 0; padding: 16px 10px; color: var(--muted); font-size: 12px; text-align: center; }
 .history-sidebar-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel); }

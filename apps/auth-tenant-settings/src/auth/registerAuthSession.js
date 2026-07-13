@@ -1,4 +1,5 @@
 import { registerMfe } from "/packages/ui/src/moduleRegistry.js";
+import { trapTabKey } from "./dialogFocus.js";
 
 registerMfe("auth-session", (element, { state, api, bus }) => {
   let mode = "email";
@@ -6,6 +7,7 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   let message = "";
   let devCode = "";
   let modalOpen = false;
+  let logoutConfirmationOpen = false;
 
   function modalTitle() {
     if (mode === "reset") return "Reset password";
@@ -289,8 +291,56 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
         <span class="auth-email" title="${state.user.email}">${state.user.email}</span>
         ${state.view === "dashboard" ? `<button id="logout" title="Logout">Logout</button>` : ""}
       </div>
+      ${logoutConfirmationOpen ? `
+        <div class="logout-confirmation-backdrop">
+          <section class="logout-confirmation" role="dialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-description" tabindex="-1">
+            <div class="logout-confirmation-icon" aria-hidden="true">!</div>
+            <div class="logout-confirmation-copy">
+              <h2 id="logout-title">Log out?</h2>
+              <p id="logout-description">You will need to sign in again to access your projects.</p>
+            </div>
+            <div class="logout-confirmation-actions">
+              <button id="cancel-logout" type="button">Cancel</button>
+              <button id="confirm-logout" class="danger" type="button">Log out</button>
+            </div>
+          </section>
+        </div>
+      ` : ""}
     `;
-    element.querySelector("#logout")?.addEventListener("click", () => bus.emit("auth:logout"));
+
+    const restoreLogoutFocus = () => {
+      logoutConfirmationOpen = false;
+      renderSignedIn();
+      // Rendering replaces the original trigger, so restore focus to its new equivalent.
+      element.querySelector("#logout")?.focus();
+    };
+
+    element.querySelector("#logout")?.addEventListener("click", () => {
+      logoutConfirmationOpen = true;
+      renderSignedIn();
+    });
+
+    const dialog = element.querySelector(".logout-confirmation");
+    if (!dialog) return;
+
+    element.querySelector("#cancel-logout").addEventListener("click", restoreLogoutFocus);
+    element.querySelector("#confirm-logout").addEventListener("click", () => {
+      logoutConfirmationOpen = false;
+      renderSignedIn();
+      bus.emit("auth:logout");
+    });
+    element.querySelector(".logout-confirmation-backdrop").addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) restoreLogoutFocus();
+    });
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        restoreLogoutFocus();
+        return;
+      }
+      trapTabKey(event, dialog);
+    });
+    element.querySelector("#cancel-logout").focus();
   }
 
   function render() {
@@ -298,7 +348,7 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
     else renderSignedOut();
   }
 
-  bus.on("auth:changed", render);
+  const stopAuthChanges = bus.on("auth:changed", render);
   render();
+  return stopAuthChanges;
 });
-

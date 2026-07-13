@@ -12,14 +12,32 @@ import {
 } from "./config/canvasConfig.js";
 import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
 import { createNodeRenderer } from "./rendering/createNodeRenderer.js";
+import { createScopedStyles } from "../../../packages/ui/src/scopedStyles.js";
 
 function id(prefix) { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[character]);
 }
 
+function insertPlainText(target, text) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) {
+    target.append(document.createTextNode(text));
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const textNode = document.createTextNode(text);
+  range.insertNode(textNode);
+  range.setStartAfter(textNode);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram }) => {
   const lifecycle = new AbortController();
+  const runtimeStyles = createScopedStyles(element, "diagram-canvas");
   const subscriptions = [];
   let zoom = state.canvasViewport?.zoom ?? 1;
   const touchPoints = new Map();
@@ -149,11 +167,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function renderMarkerDefinitions() {
     return `<defs>
-      <marker id="open-arrow" viewBox="0 0 12 12" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2,1 L10,6 L2,11" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
-      <marker id="hollow-triangle" viewBox="0 0 14 14" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1.5,1.5 L12,7 L1.5,12.5 Z" fill="var(--canvas)" stroke="context-stroke" stroke-width="1.5" stroke-linejoin="round"></path></marker>
-      <marker id="filled-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1,6 L8,1 L15,6 L8,11 Z" fill="context-stroke" stroke="context-stroke" stroke-linejoin="round"></path></marker>
-      <marker id="hollow-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1,6 L8,1 L15,6 L8,11 Z" fill="var(--canvas)" stroke="context-stroke" stroke-width="1.5" stroke-linejoin="round"></path></marker>
-      <marker id="containment" viewBox="0 0 17 17" markerWidth="17" markerHeight="17" refX="2" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><circle cx="8.5" cy="8.5" r="6.5" fill="var(--canvas)" stroke="context-stroke"></circle><path d="M5,8.5 H12 M8.5,5 V12" stroke="context-stroke" stroke-width="1.3"></path></marker>
+      <marker id="open-arrow" viewBox="0 0 12 12" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M2,1 L10,6 L2,11" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+      <marker id="hollow-triangle" viewBox="0 0 14 14" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1.5,1.5 L12,7 L1.5,12.5 Z" fill="var(--canvas)" stroke-width="1.5" stroke-linejoin="round"></path></marker>
+      <marker id="filled-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke marker-fill" d="M1,6 L8,1 L15,6 L8,11 Z" stroke-linejoin="round"></path></marker>
+      <marker id="hollow-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1,6 L8,1 L15,6 L8,11 Z" fill="var(--canvas)" stroke-width="1.5" stroke-linejoin="round"></path></marker>
+      <marker id="containment" viewBox="0 0 17 17" markerWidth="17" markerHeight="17" refX="2" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><circle class="marker-stroke" cx="8.5" cy="8.5" r="6.5" fill="var(--canvas)"></circle><path class="marker-stroke" d="M5,8.5 H12 M8.5,5 V12" stroke-width="1.3"></path></marker>
     </defs>`;
   }
 
@@ -170,11 +188,16 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         const decoration = relationshipDecoration(relationship.kind);
         const style = relationshipStyle(relationship);
         const selected = state.selectedRelationshipId === relationship.id;
+        const relationshipSelector = runtimeStyles.escape(relationship.id);
+        runtimeStyles.set(`relationship-${relationship.id}`, `.relationship-line[data-relationship="${relationshipSelector}"]`, {
+          "--relationship-color": style.color,
+          "--relationship-width": `${style.width}px`
+        });
         const labels = [relationship.label || relationshipTypes.find(([type]) => type === relationship.kind)?.[1] || relationship.kind, relationship.roleLabel, relationship.multiplicity].filter(Boolean).join("  ");
-        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${d}" style="stroke-width:${18 / zoom}px"></path>
-          <path class="relationship-line ${selected ? "selected" : ""}" d="${d}" style="--relationship-color:${style.color};--relationship-width:${style.width}px" stroke-dasharray="${decoration.dashed ? "7 6" : "0"}" ${decoration.start ? `marker-start="url(#${decoration.start})"` : ""} ${decoration.end ? `marker-end="url(#${decoration.end})"` : ""}></path>
+        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${d}"></path>
+          <path class="relationship-line ${selected ? "selected" : ""}" data-relationship="${relationship.id}" d="${d}" stroke-dasharray="${decoration.dashed ? "7 6" : "0"}" ${decoration.start ? `marker-start="url(#${decoration.start})"` : ""} ${decoration.end ? `marker-end="url(#${decoration.end})"` : ""}></path>
           <text class="relationship-label ${selected ? "selected" : ""}" data-rel="${relationship.id}" x="${labelPoint.x}" y="${labelPoint.y - 9}">${escapeHtml(labels)}</text>
-          ${selected ? [0, points.length - 1].filter((index, position, indexes) => indexes.indexOf(index) === position).map((index) => `<circle class="route-handle endpoint" data-route-handle="${relationship.id}" data-route-index="${index}" cx="${points[index].x}" cy="${points[index].y}" r="${7 / zoom}" style="stroke-width:${2 / zoom}px"></circle>`).join("") : ""}`;
+          ${selected ? [0, points.length - 1].filter((index, position, indexes) => indexes.indexOf(index) === position).map((index) => `<circle class="route-handle endpoint" data-route-handle="${relationship.id}" data-route-index="${index}" cx="${points[index].x}" cy="${points[index].y}" r="${7 / zoom}"></circle>`).join("") : ""}`;
       }).join("")}
       ${connectDrag ? `<path class="relationship-preview" d="${routeToPath([connectDrag.start, { x: connectDrag.x2, y: connectDrag.start.y }, { x: connectDrag.x2, y: connectDrag.y2 }])}" marker-end="url(#open-arrow)"></path>` : ""}
     </svg>`;
@@ -198,8 +221,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     // Measure the rendered toolbar; guessed widths caused clipping beside open sidebars.
     const position = toolbarPosition(state.diagram, toolbar.offsetWidth, toolbar.offsetHeight);
     if (!position) return;
-    toolbar.style.left = `${position.x}px`;
-    toolbar.style.top = `${position.y}px`;
+    runtimeStyles.set("format-toolbar-position", ".format-toolbar", { left: `${position.x}px`, top: `${position.y}px` });
   }
 
   function positionPointerSurface(selector, preferred) {
@@ -208,8 +230,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const rect = element.getBoundingClientRect();
     const maximumX = Math.max(rect.left + 8, rect.right - surface.offsetWidth - 8);
     const maximumY = Math.max(rect.top + 8, rect.bottom - surface.offsetHeight - 8);
-    surface.style.left = `${clamp(preferred.x, rect.left + 8, maximumX)}px`;
-    surface.style.top = `${clamp(preferred.y, rect.top + 8, maximumY)}px`;
+    runtimeStyles.set(`surface-${selector}`, selector, {
+      left: `${clamp(preferred.x, rect.left + 8, maximumX)}px`,
+      top: `${clamp(preferred.y, rect.top + 8, maximumY)}px`
+    });
   }
 
   function positionFloatingSurfaces() {
@@ -225,12 +249,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!trigger || !menu) return;
     const hostRect = element.getBoundingClientRect();
     const triggerRect = trigger.getBoundingClientRect();
-    menu.style.setProperty("--canvas-available-width", `${hostRect.width}px`);
     // Anchor the menu to the trigger while keeping the complete panel inside the canvas viewport.
     const maximumLeft = Math.max(hostRect.left + 8, hostRect.right - menu.offsetWidth - 8);
     const maximumTop = Math.max(hostRect.top + 8, hostRect.bottom - menu.offsetHeight - 8);
-    menu.style.left = `${clamp(triggerRect.right - menu.offsetWidth, hostRect.left + 8, maximumLeft)}px`;
-    menu.style.top = `${clamp(triggerRect.bottom + 6, hostRect.top + 8, maximumTop)}px`;
+    runtimeStyles.set("shortcut-position", ".shortcut-overlay", {
+      "--canvas-available-width": `${hostRect.width}px`,
+      left: `${clamp(triggerRect.right - menu.offsetWidth, hostRect.left + 8, maximumLeft)}px`,
+      top: `${clamp(triggerRect.bottom + 6, hostRect.top + 8, maximumTop)}px`
+    });
   }
 
   function renderFormattingToolbar(diagram) {
@@ -292,19 +318,24 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function renderCollaborationOverlay(diagram) {
     const nodeMap = new Map((diagram.elements ?? []).map((node) => [node.id, node]));
+    let selectionIndex = 0;
     const selections = (collaboration.presence ?? []).flatMap((person) => (person.selection ?? []).map((nodeId) => {
       const node = nodeMap.get(nodeId);
       if (!node) return "";
-      return `<div class="remote-selection" style="left:${node.x - 5}px;top:${node.y - 5}px;width:${node.width + 10}px;height:${node.height + 10}px;--collab-color:${person.color}" title="${escapeHtml(person.name)} selected ${escapeHtml(node.name)}"><span>${escapeHtml(person.name)}</span></div>`;
+      const index = selectionIndex++;
+      runtimeStyles.set(`remote-selection-${index}`, `[data-remote-selection="${index}"]`, { left: `${node.x - 5}px`, top: `${node.y - 5}px`, width: `${node.width + 10}px`, height: `${node.height + 10}px`, "--collab-color": normalizeColor(person.color, "#5aa7ff") });
+      return `<div class="remote-selection" data-remote-selection="${index}" title="${escapeHtml(person.name)} selected ${escapeHtml(node.name)}"><span>${escapeHtml(person.name)}</span></div>`;
     }));
-    const cursors = (collaboration.presence ?? []).map((person) => {
+    const cursors = (collaboration.presence ?? []).map((person, index) => {
       if (!person.cursor) return "";
-      return `<div class="live-cursor" style="left:${person.cursor.x}px;top:${person.cursor.y}px;--collab-color:${person.color}"><span></span><strong>${escapeHtml(person.name)}</strong></div>`;
+      runtimeStyles.set(`live-cursor-${index}`, `[data-live-cursor="${index}"]`, { left: `${person.cursor.x}px`, top: `${person.cursor.y}px`, "--collab-color": normalizeColor(person.color, "#5aa7ff") });
+      return `<div class="live-cursor" data-live-cursor="${index}"><span></span><strong>${escapeHtml(person.name)}</strong></div>`;
     });
-    const comments = (collaboration.comments ?? []).map((comment) => {
+    const comments = (collaboration.comments ?? []).map((comment, index) => {
       const node = nodeMap.get(comment.anchor_id);
       if (!node) return "";
-      return `<button class="comment-pin" data-focus-node="${comment.anchor_id}" style="left:${node.x + node.width - 8}px;top:${node.y - 8}px" title="${escapeHtml(comment.author)}: ${escapeHtml(comment.body)}">${(collaboration.comments ?? []).filter((item) => item.anchor_id === comment.anchor_id).length}</button>`;
+      runtimeStyles.set(`comment-pin-${index}`, `[data-comment-pin="${index}"]`, { left: `${node.x + node.width - 8}px`, top: `${node.y - 8}px` });
+      return `<button class="comment-pin" data-comment-pin="${index}" data-focus-node="${comment.anchor_id}" title="${escapeHtml(comment.author)}: ${escapeHtml(comment.body)}">${(collaboration.comments ?? []).filter((item) => item.anchor_id === comment.anchor_id).length}</button>`;
     });
     return `${selections.join("")}${cursors.join("")}${comments.join("")}`;
   }
@@ -320,18 +351,25 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function renderGuides() {
     if (!snapGuides.length) return "";
-    return snapGuides.map((guide) => guide.axis === "x"
-      ? `<div class="smart-guide vertical" style="left:${guide.value}px"></div>`
-      : `<div class="smart-guide horizontal" style="top:${guide.value}px"></div>`).join("");
+    return snapGuides.map((guide, index) => {
+      runtimeStyles.set(`smart-guide-${index}`, `[data-smart-guide="${index}"]`, guide.axis === "x" ? { left: `${guide.value}px` } : { top: `${guide.value}px` });
+      return `<div class="smart-guide ${guide.axis === "x" ? "vertical" : "horizontal"}" data-smart-guide="${index}"></div>`;
+    }).join("");
   }
 
   function renderMinimap(diagram, hostRect) {
     const scale = 160 / CANVAS.width;
     const view = minimapViewport({ canvas: CANVAS, viewport: { width: element.clientWidth, height: element.clientHeight }, minimap: { width: CANVAS.width * scale, height: CANVAS.height * scale }, scroll: { left: element.scrollLeft, top: element.scrollTop }, zoom });
-    return `<div class="canvas-minimap" style="right:${Math.max(12, window.innerWidth - hostRect.right + 18)}px;bottom:${Math.max(12, window.innerHeight - hostRect.bottom + 18)}px" title="Drag to navigate the diagram">
-      <div class="minimap-plane" data-minimap-plane style="width:${CANVAS.width * scale}px;height:${CANVAS.height * scale}px" role="application" aria-label="Diagram minimap. Drag or use arrow keys to navigate." tabindex="0">
-        ${diagram.elements.map((node) => `<span class="minimap-node" style="left:${node.x * scale}px;top:${node.y * scale}px;width:${Math.max(2, node.width * scale)}px;height:${Math.max(2, node.height * scale)}px"></span>`).join("")}
-        <span class="minimap-viewport" data-minimap-viewport style="left:${view.left}px;top:${view.top}px;width:${view.width}px;height:${view.height}px"></span>
+    runtimeStyles.set("minimap-position", ".canvas-minimap", { right: `${Math.max(12, window.innerWidth - hostRect.right + 18)}px`, bottom: `${Math.max(12, window.innerHeight - hostRect.bottom + 18)}px` });
+    runtimeStyles.set("minimap-plane", "[data-minimap-plane]", { width: `${CANVAS.width * scale}px`, height: `${CANVAS.height * scale}px` });
+    runtimeStyles.set("minimap-viewport", "[data-minimap-viewport]", { left: `${view.left}px`, top: `${view.top}px`, width: `${view.width}px`, height: `${view.height}px` });
+    return `<div class="canvas-minimap" title="Drag to navigate the diagram">
+      <div class="minimap-plane" data-minimap-plane role="application" aria-label="Diagram minimap. Drag or use arrow keys to navigate." tabindex="0">
+        ${diagram.elements.map((node, index) => {
+          runtimeStyles.set(`minimap-node-${index}`, `[data-minimap-node="${index}"]`, { left: `${node.x * scale}px`, top: `${node.y * scale}px`, width: `${Math.max(2, node.width * scale)}px`, height: `${Math.max(2, node.height * scale)}px` });
+          return `<span class="minimap-node" data-minimap-node="${index}"></span>`;
+        }).join("")}
+        <span class="minimap-viewport" data-minimap-viewport></span>
       </div>
     </div>`;
   }
@@ -340,7 +378,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!searchOpen) return "";
     const query = searchQuery.trim().toLowerCase();
     const results = query ? diagram.elements.filter((node) => `${node.name} ${node.kind}`.toLowerCase().includes(query)).slice(0, 20) : [];
-    return `<div class="canvas-overlay search-overlay" style="left:${hostRect.left + hostRect.width / 2}px;--canvas-available-width:${hostRect.width}px">
+    runtimeStyles.set("search-overlay", ".search-overlay", { left: `${hostRect.left + hostRect.width / 2}px`, "--canvas-available-width": `${hostRect.width}px` });
+    return `<div class="canvas-overlay search-overlay">
       <input id="diagram-search" value="${escapeHtml(searchQuery)}" placeholder="Search elements" aria-label="Search elements">
       <div class="overlay-results">${results.map((node) => `<button data-focus-node="${node.id}"><strong>${escapeHtml(node.name)}</strong><span>${escapeHtml(node.kind)}</span></button>`).join("") || `<span class="overlay-empty">${query ? "No matches" : "Type to search"}</span>`}</div>
     </div>`;
@@ -356,9 +395,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function renderPrintPreview(diagram) {
     if (!printPreviewOpen) return "";
     const page = pageFrame();
+    runtimeStyles.set("print-sheet", ".print-sheet", { "aspect-ratio": `${page.width}/${page.height}` });
     return `<div class="print-preview-backdrop"><div class="print-preview">
       <div class="print-preview-header"><strong>Print preview</strong><button data-command="close-print">Close</button></div>
-      <div class="print-sheet" style="aspect-ratio:${page.width}/${page.height}"><span>${escapeHtml(page.label)} · ${page.width} × ${page.height}</span></div>
+      <div class="print-sheet"><span>${escapeHtml(page.label)} · ${page.width} × ${page.height}</span></div>
       <button data-command="print-diagram" class="primary">Print</button>
     </div></div>`;
   }
@@ -367,12 +407,22 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (zoomRenderTimer !== null) { clearTimeout(zoomRenderTimer); zoomRenderTimer = null; }
     const diagram = state.diagram;
     if (!diagram) return;
+    runtimeStyles.clear();
     gridSize = diagram.metadata?.gridSize ?? diagram.metadata?.grid ?? gridSize;
     showGrid = diagram.metadata?.showGrid ?? showGrid;
     const scroll = { left: element.scrollLeft, top: element.scrollTop };
     const hostRect = element.getBoundingClientRect();
     const previewTop = paletteHover ? clamp(paletteHover.clientY - 100, hostRect.top + 68, hostRect.bottom - 224) : 0;
-    // Coordinates and model-selected colors below are live diagram data; structural presentation remains in canvas.css.
+    runtimeStyles.set("canvas-content", ".canvas-content", { width: `${CANVAS.width * zoom}px`, height: `${CANVAS.height * zoom}px`, "--grid-size": `${Math.max(1, gridSize)}px` });
+    runtimeStyles.set("canvas-plane", "#canvas-plane", { width: `${CANVAS.width}px`, height: `${CANVAS.height}px`, transform: `scale(${zoom})` });
+    runtimeStyles.set("relationship-hit-width", ".relationship-hit", { "stroke-width": `${18 / zoom}px` });
+    runtimeStyles.set("route-handle-width", ".route-handle", { "stroke-width": `${2 / zoom}px` });
+    if (paletteHover) runtimeStyles.set("palette-preview", ".palette-canvas-preview", { left: `${hostRect.left + 14}px`, top: `${previewTop}px` });
+    if (pointerDrag) runtimeStyles.set("drag-ghost", ".canvas-drag-ghost", { left: `${pointerDrag.clientX + 16}px`, top: `${pointerDrag.clientY + 16}px` });
+    const selectionBox = selectedIds().length > 1 ? selectionFrame ?? selectionBounds(diagram.elements, selectedIds()) : null;
+    if (selectionBox) runtimeStyles.set("selection-box", "[data-selection-area]", { left: `${selectionBox.left}px`, top: `${selectionBox.top}px`, width: `${selectionBox.right - selectionBox.left}px`, height: `${selectionBox.bottom - selectionBox.top}px` });
+    if (gesture?.type === "marquee") runtimeStyles.set("selection-marquee", ".selection-marquee", { left: `${gesture.rect.left}px`, top: `${gesture.rect.top}px`, width: `${gesture.rect.right - gesture.rect.left}px`, height: `${gesture.rect.bottom - gesture.rect.top}px` });
+    // Live geometry is written to the scoped stylesheet, keeping generated markup free of inline presentation.
     element.innerHTML = `<div class="canvas-chrome"><div class="canvas-toolbar">
       <button id="history-undo" title="Undo last change" aria-label="Undo last change" ${state.history.length ? "" : "disabled"}>↶</button><button id="history-redo" title="Redo last change" aria-label="Redo last change" ${state.future.length ? "" : "disabled"}>↷</button>
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" aria-label="Reset zoom to 100%" class="zoom-level ${zoom === 1 ? "active" : ""}" ${zoom === 1 ? "disabled" : ""}>${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
@@ -380,29 +430,32 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <button id="select-all" class="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length ? "active" : ""}" title="Select all elements" aria-label="Select all elements" aria-pressed="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length}" ${diagram.elements.length ? "" : "disabled"}>Select all</button>
       <select id="grid-size" title="Grid size" aria-label="Canvas grid size">${[0, 10, 20, 40, 80].map((size) => `<option value="${size}" ${gridSize === size ? "selected" : ""}>${size ? `${size}px grid` : "Grid off"}</option>`).join("")}</select>
       <button id="keyboard-help" class="${shortcutHelpOpen ? "active" : ""}" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-controls="keyboard-help-menu" aria-expanded="${shortcutHelpOpen}" aria-pressed="${shortcutHelpOpen}">?</button>
-    </div>${paletteHover ? `<div class="palette-canvas-preview" style="left:${hostRect.left + 14}px;top:${previewTop}px" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
-      ${pointerDrag ? `<div class="canvas-drag-ghost" style="left:${pointerDrag.clientX + 16}px;top:${pointerDrag.clientY + 16}px"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
-    <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}" style="width:${CANVAS.width * zoom}px;height:${CANVAS.height * zoom}px;--grid-size:${Math.max(1, gridSize)}px">
-      <div id="canvas-plane" style="width:${CANVAS.width}px;height:${CANVAS.height}px;transform:scale(${zoom})">
+    </div>${paletteHover ? `<div class="palette-canvas-preview" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
+      ${pointerDrag ? `<div class="canvas-drag-ghost"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
+    <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}">
+      <div id="canvas-plane">
         ${renderRelationships(diagram)}
         ${renderGuides()}
         ${renderCollaborationOverlay(diagram)}
-        ${selectedIds().length > 1 && (selectionFrame ?? selectionBounds(diagram.elements, selectedIds())) ? (() => { const bounds = selectionFrame ?? selectionBounds(diagram.elements, selectedIds()); return `<div class="group-selection-box" data-selection-area style="left:${bounds.left}px;top:${bounds.top}px;width:${bounds.right - bounds.left}px;height:${bounds.bottom - bounds.top}px" title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>`; })() : ""}
+        ${selectionBox ? `<div class="group-selection-box" data-selection-area title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>` : ""}
         ${diagram.elements.map((node) => {
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
-          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;--node-fill:${style.fillColor};--node-border:${style.borderColor};--node-border-width:${style.borderWidth}px;--node-text-color:${style.textColor};--node-text-size:${style.textSize}px;--node-font-weight:${style.textStyle.includes("bold") ? 700 : 400};--node-font-style:${style.textStyle.includes("italic") ? "italic" : "normal"}">
+          runtimeStyles.set(`node-${node.id}`, `.diagram-node[data-node="${runtimeStyles.escape(node.id)}"]`, { left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px`, "--node-fill": style.fillColor, "--node-border": style.borderColor, "--node-border-width": `${style.borderWidth}px`, "--node-text-color": style.textColor, "--node-text-size": `${style.textSize}px`, "--node-font-weight": style.textStyle.includes("bold") ? 700 : 400, "--node-font-style": style.textStyle.includes("italic") ? "italic" : "normal" });
+          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text">
             ${renderNodeContent(node)}
             ${selected ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
           </div>`;
         }).join("")}
-        ${gesture?.type === "marquee" ? `<div class="selection-marquee" style="left:${gesture.rect.left}px;top:${gesture.rect.top}px;width:${gesture.rect.right - gesture.rect.left}px;height:${gesture.rect.bottom - gesture.rect.top}px"></div>` : ""}
+        ${gesture?.type === "marquee" ? `<div class="selection-marquee"></div>` : ""}
       </div>
     </div>${renderMinimap(diagram, hostRect)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram, hostRect)}${renderShortcutHelp()}${renderPrintPreview(diagram)}`;
     element.scrollLeft = scroll.left; element.scrollTop = scroll.top;
+    runtimeStyles.commit();
     bindRenderedEvents();
     positionFloatingSurfaces();
     syncMinimapViewport();
+    runtimeStyles.commit();
   }
 
   function setZoom(nextZoom, clientX, clientY) {
@@ -415,10 +468,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (Math.abs(clampedZoom - zoom) < 0.0001) return;
     zoom = clampedZoom;
     state.canvasViewport = { ...(state.canvasViewport ?? {}), zoom };
-    const content = element.querySelector(".canvas-content");
-    const plane = element.querySelector("#canvas-plane");
-    if (content) { content.style.width = `${CANVAS.width * zoom}px`; content.style.height = `${CANVAS.height * zoom}px`; }
-    if (plane) plane.style.transform = `scale(${zoom})`;
+    runtimeStyles.set("canvas-content", ".canvas-content", { width: `${CANVAS.width * zoom}px`, height: `${CANVAS.height * zoom}px`, "--grid-size": `${Math.max(1, gridSize)}px` });
+    runtimeStyles.set("canvas-plane", "#canvas-plane", { width: `${CANVAS.width}px`, height: `${CANVAS.height}px`, transform: `scale(${zoom})` });
+    runtimeStyles.set("relationship-hit-width", ".relationship-hit", { "stroke-width": `${18 / zoom}px` });
+    runtimeStyles.set("route-handle-width", ".route-handle", { "stroke-width": `${2 / zoom}px` });
     element.scrollLeft = canvasX * zoom - (focusX - rect.left);
     element.scrollTop = canvasY * zoom - (focusY - rect.top);
     state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
@@ -428,10 +481,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const zoomIn = element.querySelector("#zoom-in");
     if (zoomOut) zoomOut.disabled = zoom <= ZOOM.minimum;
     if (zoomIn) zoomIn.disabled = zoom >= ZOOM.maximum;
-    element.querySelectorAll(".relationship-hit").forEach((path) => { path.style.strokeWidth = `${18 / zoom}px`; });
-    element.querySelectorAll(".route-handle").forEach((handle) => { handle.setAttribute("r", String(7 / zoom)); handle.style.strokeWidth = `${2 / zoom}px`; });
+    element.querySelectorAll(".route-handle").forEach((handle) => handle.setAttribute("r", String(7 / zoom)));
     positionFormattingToolbar();
     syncMinimapViewport();
+    runtimeStyles.commit();
     clearTimeout(zoomRenderTimer);
     zoomRenderTimer = setTimeout(() => { zoomRenderTimer = null; render(); }, 120);
   }
@@ -441,20 +494,28 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const viewport = element.querySelector("[data-minimap-viewport]");
     if (!plane || !viewport) return;
     const view = minimapViewport({ canvas: CANVAS, viewport: { width: element.clientWidth, height: element.clientHeight }, minimap: { width: plane.clientWidth, height: plane.clientHeight }, scroll: { left: element.scrollLeft, top: element.scrollTop }, zoom });
-    viewport.style.width = `${view.width}px`;
-    viewport.style.height = `${view.height}px`;
-    viewport.style.left = `${view.left}px`;
-    viewport.style.top = `${view.top}px`;
+    runtimeStyles.set("minimap-viewport", "[data-minimap-viewport]", { width: `${view.width}px`, height: `${view.height}px`, left: `${view.left}px`, top: `${view.top}px` });
   }
 
   function moveCanvasFromMinimap(event) {
-    const plane = event.currentTarget;
+    const plane = element.querySelector("[data-minimap-plane]");
+    if (!plane || !minimapDrag) return;
     const rect = plane.getBoundingClientRect();
     const viewport = plane.querySelector("[data-minimap-viewport]");
     const scroll = canvasScrollFromMinimap({ canvas: CANVAS, minimap: { width: rect.width, height: rect.height }, viewport: { width: viewport.offsetWidth, height: viewport.offsetHeight }, position: { left: event.clientX - rect.left - minimapDrag.offsetX, top: event.clientY - rect.top - minimapDrag.offsetY }, zoom });
     element.scrollLeft = scroll.left;
     element.scrollTop = scroll.top;
     syncMinimapViewport();
+  }
+
+  function stopMinimapDrag(event) {
+    if (!minimapDrag || event.pointerId !== minimapDrag.pointerId) return;
+    const minimap = element.querySelector("[data-minimap-plane]");
+    try {
+      if (minimap?.hasPointerCapture?.(event.pointerId)) minimap.releasePointerCapture(event.pointerId);
+    } catch { /* Pointer capture may already be gone after a Safari gesture cancellation. */ }
+    minimap?.classList.remove("dragging");
+    minimapDrag = null;
   }
 
   function bindRenderedEvents() {
@@ -477,7 +538,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const viewportRect = viewport.getBoundingClientRect();
       const grabbedViewport = event.target.closest("[data-minimap-viewport]");
       minimapDrag = { pointerId: event.pointerId, offsetX: grabbedViewport ? event.clientX - viewportRect.left : viewportRect.width / 2, offsetY: grabbedViewport ? event.clientY - viewportRect.top : viewportRect.height / 2 };
-      minimap.setPointerCapture(event.pointerId);
+      try { minimap.setPointerCapture?.(event.pointerId); } catch { /* Window handlers below keep the minimap usable without capture. */ }
       minimap.classList.add("dragging");
       moveCanvasFromMinimap(event);
     });
@@ -485,11 +546,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       if (!minimapDrag || event.pointerId !== minimapDrag.pointerId) return;
       event.preventDefault(); event.stopPropagation(); moveCanvasFromMinimap(event);
     });
-    const stopMinimapDrag = (event) => {
-      if (!minimapDrag || event.pointerId !== minimapDrag.pointerId) return;
-      if (minimap.hasPointerCapture(event.pointerId)) minimap.releasePointerCapture(event.pointerId);
-      minimap.classList.remove("dragging"); minimapDrag = null;
-    };
     minimap?.addEventListener("pointerup", stopMinimapDrag);
     minimap?.addEventListener("pointercancel", stopMinimapDrag);
     minimap?.addEventListener("keydown", (event) => {
@@ -544,6 +600,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     });
     element.querySelectorAll("[data-node-editor]").forEach((input) => {
       input.addEventListener("pointerdown", (event) => event.stopPropagation());
+      input.addEventListener("paste", (event) => {
+        // contenteditable="plaintext-only" is inconsistent across browser versions, so sanitize paste ourselves.
+        event.preventDefault();
+        insertPlainText(input, event.clipboardData?.getData("text/plain") ?? "");
+      });
       input.addEventListener("keydown", (event) => {
         const editingName = input.dataset.nodeSection === "name";
         if (event.key === "Enter" && ((editingName && !event.shiftKey) || (!editingName && (event.ctrlKey || event.metaKey)))) { event.preventDefault(); input.blur(); }
@@ -696,11 +757,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (input.dataset.style) {
       const property = input.dataset.style;
       const cssProperty = { fillColor: "--node-fill", borderColor: "--node-border", textColor: "--node-text-color" }[property];
-      if (cssProperty) element.querySelectorAll(".diagram-node.selected").forEach((node) => node.style.setProperty(cssProperty, value));
+      if (cssProperty) runtimeStyles.set("color-preview-node", ".diagram-node.selected", { [cssProperty]: value });
     }
     if (input.dataset.relationshipStyle === "color") {
-      element.querySelector(".relationship-line.selected")?.style.setProperty("--relationship-color", value);
+      runtimeStyles.set("color-preview-relationship", ".relationship-line.selected", { "--relationship-color": value });
     }
+    runtimeStyles.commit();
   }
 
   function commitColor(input) {
@@ -892,6 +954,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   });
 
   window.addEventListener("pointermove", (event) => {
+    if (minimapDrag) {
+      if (event.pointerId === minimapDrag.pointerId) moveCanvasFromMinimap(event);
+      return;
+    }
     if (event.pointerType === "touch" && touchPoints.has(event.pointerId)) {
       touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (pinch && touchPoints.size >= 2) {
@@ -943,6 +1009,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }, { signal: lifecycle.signal });
 
   window.addEventListener("pointerup", (event) => {
+    if (minimapDrag) {
+      stopMinimapDrag(event);
+      return;
+    }
     if (event.pointerType === "touch") {
       touchPoints.delete(event.pointerId);
       if (touchPoints.size < 2) pinch = null;
@@ -1038,9 +1108,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let viewportResizeFrame = null;
   element.addEventListener("canvas:resize", () => {
     const hostRect = element.getBoundingClientRect();
-    const minimap = element.querySelector(".canvas-minimap");
-    if (minimap) { minimap.style.right = `${Math.max(12, window.innerWidth - hostRect.right + 18)}px`; minimap.style.bottom = `${Math.max(12, window.innerHeight - hostRect.bottom + 18)}px`; }
+    runtimeStyles.set("minimap-position", ".canvas-minimap", { right: `${Math.max(12, window.innerWidth - hostRect.right + 18)}px`, bottom: `${Math.max(12, window.innerHeight - hostRect.bottom + 18)}px` });
     syncMinimapViewport();
+    runtimeStyles.commit();
     if (viewportResizeFrame !== null) return;
     viewportResizeFrame = requestAnimationFrame(() => {
       viewportResizeFrame = null;
@@ -1050,7 +1120,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   subscriptions.push(bus.on("diagram:changed", () => {
     if (activeRelationshipKind && !isPaletteItemAllowed(state.diagram?.type, "relationship", activeRelationshipKind)) { activeRelationshipKind = null; activeRelationshipLabel = null; }
+    // Imports replace viewport state before this event so zoom and scroll are restored with the diagram.
+    const importedViewport = state.canvasViewport;
+    if (Number.isFinite(importedViewport?.zoom)) zoom = clamp(importedViewport.zoom, ZOOM.minimum, ZOOM.maximum);
     render();
+    if (Number.isFinite(importedViewport?.scrollLeft) && Number.isFinite(importedViewport?.scrollTop)) {
+      element.scrollLeft = importedViewport.scrollLeft;
+      element.scrollTop = importedViewport.scrollTop;
+      syncMinimapViewport();
+    }
   }));
   subscriptions.push(bus.on("selection:changed", render));
   subscriptions.push(bus.on("ui:menu-open", (menu) => {
@@ -1099,5 +1177,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     subscriptions.splice(0).forEach((unsubscribe) => unsubscribe());
     if (zoomRenderTimer !== null) clearTimeout(zoomRenderTimer);
     if (viewportResizeFrame !== null) cancelAnimationFrame(viewportResizeFrame);
+    runtimeStyles.destroy();
   };
 });

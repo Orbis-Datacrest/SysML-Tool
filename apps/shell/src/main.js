@@ -31,7 +31,9 @@ document.addEventListener("keydown", (event) => {
     const popover = document.querySelector("#share-popover");
     if (popover && !popover.hidden) {
       popover.hidden = true;
-      document.querySelector("#share-project")?.setAttribute("aria-expanded", "false");
+      const shareButton = document.querySelector("#share-project");
+      shareButton?.setAttribute("aria-expanded", "false");
+      shareButton?.focus();
     }
   }
 });
