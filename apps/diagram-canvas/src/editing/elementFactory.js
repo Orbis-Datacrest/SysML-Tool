@@ -4,7 +4,7 @@ import { circleKinds, diamondKinds, ellipseKinds, noteKinds, roundedKinds } from
 const createId = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 export const nodeLabel = (kind) => kind.split("-").map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`).join(" ");
 
-export function defaultSizeFor(kind) {
+export function defaultSizeFor(kind, variant = "full") {
   const sizes = {
     actor: [110, 170], "compact-class": [118, 56], component: [165, 98], object: [155, 78],
     "object-compact": [150, 78], "interface-class": [180, 190], "template-class": [170, 150],
@@ -14,6 +14,7 @@ export function defaultSizeFor(kind) {
     "accept-event-action": [180, 80], "send-signal-action": [180, 80], "input-pin": [54, 54],
     "output-pin": [54, 54], "destruction-occurrence": [70, 70]
   };
+  if (["class", "block"].includes(kind) && variant === "simple") return { width: 190, height: 120 };
   if (sizes[kind]) return { width: sizes[kind][0], height: sizes[kind][1] };
   if (ellipseKinds.has(kind)) return { width: 160, height: 86 };
   if (diamondKinds.has(kind)) return { width: 110, height: 90 };
@@ -34,7 +35,8 @@ export function defaultNameFor(kind) {
   return names[kind] ?? nodeLabel(kind);
 }
 
-export function defaultPropertiesFor(kind, diagram) {
+export function defaultPropertiesFor(kind, diagram, variant = "full") {
+  if (["class", "block"].includes(kind)) return variant === "simple" ? { attributes: [] } : { attributes: [], operations: [] };
   if (kind === "requirement") {
     const requirementId = nextRequirementId({ elements: diagram.elements.map((node) => ({ id: node.id, kind: node.kind, semantic: node.properties ?? {} })) });
     return { requirementId, text: "The system shall ...", owner: "", priority: "medium", risk: "medium", approvalStatus: "draft", verificationStatus: "not-started", verificationMethod: "test", parentRequirementId: "", baseline: { id: "working", version: diagram.version ?? 1 } };

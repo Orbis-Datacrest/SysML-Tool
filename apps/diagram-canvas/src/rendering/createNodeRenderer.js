@@ -1,4 +1,4 @@
-import { circleKinds, compartmentDefinitions, diamondKinds, ellipseKinds, noteKinds, packageKinds, roundedKinds } from "../config/canvasConfig.js";
+import { circleKinds, compartmentDefinitionsFor, diamondKinds, ellipseKinds, noteKinds, packageKinds, roundedKinds } from "../config/canvasConfig.js";
 import { nodeLabel } from "../editing/elementFactory.js";
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[character]);
@@ -45,7 +45,6 @@ export function createNodeRenderer({ getEditingNode }) {
       <div class="structured-class-title"><strong>&lt;&lt;interface&gt;&gt;</strong>${simpleName("", "Interface name")}</div>
       ${editableSection(node, "attributes", "Attributes", "structured-class-section", "Attributes")}
       ${editableSection(node, "operations", "Operations", "structured-class-section", "Operations")}
-      ${editableSection(node, "responsibilities", "Acting / Charge", "structured-class-section", "Acting/Charge")}
     </div>`;
     if (node.kind === "template-class") return `<div class="template-parameter">${editableSection(node, "templateParameter", "Template parameter", "template-parameter-text", "T")}</div><div class="structured-class-content template-class-content">
       <div class="structured-class-title">${simpleName("", "Template class name")}</div>
@@ -81,7 +80,7 @@ export function createNodeRenderer({ getEditingNode }) {
     if (roundedKinds.has(node.kind)) return `<div class="rounded-content"><strong>${simpleName("")}</strong><small>${escapeHtml(nodeLabel(node.kind))}</small></div>`;
     const title = editableText(node, "name", node.name, "node-title-text", "Name");
     return `<div class="node-title" data-edit-section="name">${title}${node.locked ? `<span class="lock-indicator" title="Locked">●</span>` : ""}<div class="node-stereotype">«${escapeHtml(nodeLabel(node.kind))}»</div></div>
-      <div class="node-compartments">${compartmentDefinitions.map(({ key, label }) => {
+      <div class="node-compartments">${compartmentDefinitionsFor(node).map(({ key, label }) => {
         const values = node.properties?.[key] ?? [];
         const text = Array.isArray(values) ? values.join("\n") : String(values ?? "");
         const collapsed = Boolean(node.properties?.collapsedCompartments?.[key]);

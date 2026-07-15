@@ -9,6 +9,17 @@ test("SVG preserves layout, style, compartments, route and labels", () => {
   assert.match(svg, /viewBox=/); assert.match(svg, /#ffeecc/); assert.match(svg, /risk: low/); assert.match(svg, /satisfies  safety  1/); assert.match(svg, /L 250 150/);
 });
 
+test("SVG respects class and block compartment variants without exposing legacy responsibilities", () => {
+  const svg = toSvg({ elements: [
+    { id: "full", kind: "class", variant: "full", name: "Full", x: 0, y: 0, width: 200, height: 140, properties: { attributes: ["id: String"], operations: ["save()"], responsibilities: ["legacy full"] } },
+    { id: "simple", kind: "block", variant: "simple", name: "Simple", x: 250, y: 0, width: 200, height: 120, properties: { attributes: ["mass: Real"], operations: ["hidden()"], responsibilities: ["legacy simple"] } }
+  ], relationships: [] });
+  assert.match(svg, /id: String/);
+  assert.match(svg, /save\(\)/);
+  assert.match(svg, /mass: Real/);
+  assert.doesNotMatch(svg, /hidden\(\)|legacy full|legacy simple|Responsibilities/);
+});
+
 test("PDF contains vector paths and text rather than a placeholder page", () => {
   const pdf = new TextDecoder().decode(toVectorPdf(diagram));
   assert.match(pdf, /^%PDF-1.4/); assert.match(pdf, /Controller/); assert.match(pdf, / re B/); assert.match(pdf, / l S/);

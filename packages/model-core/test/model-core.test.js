@@ -16,6 +16,10 @@ test("palette keeps common tools global and diagram tools strictly scoped", () =
   assert.equal(isPaletteItemAllowed("uml-use-case", "node", "actor"), true);
   assert.equal(isPaletteItemAllowed("sysml-requirement", "relationship", "satisfy"), true);
   assert.equal(isPaletteItemAllowed("sysml-requirement", "node", "class"), false);
+  const classVariants = diagramCatalog.find(({ value }) => value === "uml-class").palette.filter(({ kind }) => kind === "class").map(({ variant }) => variant);
+  const blockVariants = diagramCatalog.find(({ value }) => value === "sysml-bdd").palette.filter(({ kind }) => kind === "block").map(({ variant }) => variant);
+  assert.deepEqual(classVariants, ["full", "simple"]);
+  assert.deepEqual(blockVariants, ["full", "simple"]);
 });
 
 test("validates tenant-scoped diagrams and relationships", () => {
@@ -71,16 +75,20 @@ test("validates the interactive canvas relationship variants", () => {
 
 test("decomposes model semantics from diagram layout and hydrates a compatible canvas view", () => {
   const diagram = { id: "d1", tenant_id: "t1", project_id: "p1", type: "sysml-bdd", metadata: { grid: 20 }, elements: [
-    { id: "b1", kind: "block", name: "Vehicle", x: 40, y: 60, width: 200, height: 140, style: { fillColor: "#ffcc00", borderColor: "#123456", textColor: "#654321" }, properties: { parts: ["engine: Engine"], operations: ["start()"] } }
+    { id: "b1", kind: "block", variant: "simple", name: "Vehicle", x: 40, y: 60, width: 200, height: 140, style: { fillColor: "#ffcc00", borderColor: "#123456", textColor: "#654321" }, properties: { attributes: ["mass: Mass"], parts: ["engine: Engine"], operations: ["start()"], responsibilities: ["Legacy data"] } }
   ], relationships: [] };
   const decomposed = decomposeDiagram(diagram);
   assert.deepEqual(decomposed.elements[0].semantic.parts, ["engine: Engine"]);
   assert.equal(decomposed.elements[0].x, undefined);
   assert.equal(decomposed.view.element_refs[0].model_element_id, "b1");
   assert.equal(decomposed.view.element_refs[0].x, 40);
+  assert.equal(decomposed.view.element_refs[0].variant, "simple");
+  assert.deepEqual(decomposed.elements[0].semantic.attributes, ["mass: Mass"]);
+  assert.deepEqual(decomposed.elements[0].semantic.responsibilities, ["Legacy data"]);
   const hydrated = hydrateDiagram(diagram, { elements: decomposed.elements, relationships: [] }, decomposed.view);
   assert.equal(hydrated.elements[0].name, "Vehicle");
   assert.equal(hydrated.elements[0].x, 40);
+  assert.equal(hydrated.elements[0].variant, "simple");
   assert.deepEqual(hydrated.elements[0].style, { fillColor: "#ffcc00", borderColor: "#123456", textColor: "#654321" });
 });
 

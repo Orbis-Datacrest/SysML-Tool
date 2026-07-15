@@ -44,7 +44,7 @@ function previewText(kind, y = 27, className = "preview-text") {
   return `<text class="${className}" x="36" y="${y}" text-anchor="middle">${text}</text>`;
 }
 
-function elementPreview(kind) {
+function elementPreview(kind, variant = "full") {
   if (["association", "link", "connector", "communication-path", "control-flow", "object-flow", "transition", "item-flow", "binding-connector"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M5 24h62"/>${["control-flow", "object-flow", "transition", "item-flow"].includes(kind) ? `<path d="m58 18 9 6-9 6"/>` : ""}</svg>`;
   if (["dependency", "note-connector", "include", "extend", "package-merge", "satisfy", "verify", "refine", "trace", "derive-reqt"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path stroke-dasharray="6 4" d="M5 24h62"/><path d="m58 18 9 6-9 6"/></svg>`;
   if (["generalization", "extension"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M5 24h50"/><path class="shape-fill" d="m55 15 12 9-12 9Z"/></svg>`;
@@ -85,11 +85,12 @@ function elementPreview(kind) {
   if (kind === "system-boundary") return `<svg viewBox="0 0 72 48" aria-hidden="true"><rect class="shape-fill" x="4" y="3" width="64" height="42" rx="8"/>${previewText(kind)}</svg>`;
   if (kind === "activity-partition") return `<svg viewBox="0 0 72 48" aria-hidden="true"><rect class="shape-fill" x="14" y="3" width="44" height="42"/><path d="M14 14h44"/>${previewText(kind, 11, "preview-tiny-text")}</svg>`;
   if (["artifact", "deployment-specification"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path class="shape-fill" d="M16 4h31l10 10v30H16Z"/><path d="M47 4v10h10"/>${previewText(kind, 29)}</svg>`;
-  return `<svg viewBox="0 0 72 48" aria-hidden="true"><rect class="shape-fill" x="4" y="2" width="64" height="44" rx="2"/><path d="M4 16h64M4 31h64"/><text class="preview-stereotype" x="36" y="9" text-anchor="middle">«${labelFor(kind)}»</text><text class="preview-text" x="36" y="14" text-anchor="middle">${labelFor(kind)}</text><text class="preview-small-text" x="8" y="25">attributes</text><text class="preview-small-text" x="8" y="40">operations</text></svg>`;
+  const simple = ["class", "block"].includes(kind) && variant === "simple";
+  return `<svg viewBox="0 0 72 48" aria-hidden="true"><rect class="shape-fill" x="4" y="2" width="64" height="44" rx="2"/><path d="M4 16h64${simple ? "" : "M4 31h64"}"/><text class="preview-stereotype" x="36" y="9" text-anchor="middle">«${labelFor(kind)}»</text><text class="preview-text" x="36" y="14" text-anchor="middle">${labelFor(kind)}</text><text class="preview-small-text" x="8" y="${simple ? 33 : 25}">attributes</text>${simple ? "" : `<text class="preview-small-text" x="8" y="40">operations</text>`}</svg>`;
 }
 
 function paletteItems(items) {
-  return `<div class="palette-grid">${items.map((item) => `<button class="palette-item" draggable="false" data-kind="${item.kind}" data-palette-type="${item.type}" title="${item.label}" aria-label="Drag ${item.label} to the canvas"><span class="palette-symbol">${elementPreview(item.shape ?? item.kind)}</span><span class="palette-item-label">${item.label}</span></button>`).join("")}</div>`;
+  return `<div class="palette-grid">${items.map((item) => `<button class="palette-item" draggable="false" data-kind="${item.kind}" data-variant="${item.variant ?? ""}" data-palette-type="${item.type}" title="${item.label}" aria-label="Drag ${item.label} to the canvas"><span class="palette-symbol">${elementPreview(item.shape ?? item.kind, item.variant)}</span><span class="palette-item-label">${item.label}</span></button>`).join("")}</div>`;
 }
 
 registerMfe("element-palette", (element, { state, bus }) => {
@@ -105,8 +106,8 @@ registerMfe("element-palette", (element, { state, bus }) => {
       <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>
     </div>`;
     element.querySelectorAll("[data-kind]").forEach((button) => {
-      const item = [...commonNodes, ...diagramNodes].find(({ kind, type }) => kind === button.dataset.kind && type === button.dataset.paletteType);
-      const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, preview: elementPreview(item.shape ?? item.kind), clientY });
+      const item = [...commonNodes, ...diagramNodes].find(({ kind, type, variant }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant);
+      const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, preview: elementPreview(item.shape ?? item.kind, item.variant), clientY });
       button.addEventListener("mouseenter", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
       button.addEventListener("mousemove", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
       button.addEventListener("focus", () => bus.emit("palette:hover", detail()));
@@ -121,7 +122,7 @@ registerMfe("element-palette", (element, { state, bus }) => {
           if (pointerEvent.pointerId !== pointerId) return;
           if (!dragging && Math.hypot(pointerEvent.clientX - origin.x, pointerEvent.clientY - origin.y) < 4) return;
           if (!dragging) { dragging = true; pointerDragging = true; bus.emit("palette:dragstart", button.dataset.kind); }
-          bus.emit("palette:pointermove", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY, preview: elementPreview(item.shape ?? item.kind) });
+          bus.emit("palette:pointermove", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY, preview: elementPreview(item.shape ?? item.kind, item.variant) });
         };
         const pointerId = event.pointerId;
         const up = (pointerEvent) => {

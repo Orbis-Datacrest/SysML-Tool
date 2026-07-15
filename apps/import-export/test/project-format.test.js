@@ -8,7 +8,7 @@ function validDiagram() {
     name: "System",
     metadata: { gridSize: 20, showGrid: true },
     elements: [
-      { id: "a", kind: "block", name: "A", x: 10, y: 20, width: 180, height: 120, properties: {}, style: { fillColor: "#ffffff" } },
+      { id: "a", kind: "block", variant: "simple", name: "A", x: 10, y: 20, width: 180, height: 120, properties: { responsibilities: ["legacy"] }, style: { fillColor: "#ffffff" } },
       { id: "b", kind: "block", name: "B", x: 300, y: 20, width: 180, height: 120, properties: {} }
     ],
     relationships: [{ id: "r1", kind: "dependency", source_id: "a", target_id: "b", waypoints: [{ x: 240, y: 80 }], style: { color: "#334455", width: 2 } }]
@@ -43,4 +43,13 @@ test("validation returns a clone and does not mutate the supplied diagram", () =
   const validated = validateDiagramSnapshot(diagram);
   validated.elements[0].name = "Changed";
   assert.equal(diagram.elements[0].name, "A");
+});
+
+test("class and block variants round-trip while invalid variants are rejected", () => {
+  const diagram = validDiagram();
+  const imported = parseProjectSnapshot(JSON.stringify(diagram));
+  assert.equal(imported.diagram.elements[0].variant, "simple");
+  assert.deepEqual(imported.diagram.elements[0].properties.responsibilities, ["legacy"]);
+  diagram.elements[0].variant = "compact";
+  assert.throws(() => validateDiagramSnapshot(diagram), /variant must be/);
 });

@@ -18,7 +18,12 @@ export function diagramBounds(diagram, padding = 32) {
 function svgNode(node) {
   const style = { ...defaults, ...(node.style ?? {}) };
   const stereotype = (node.stereotypes ?? []).length ? `«${node.stereotypes.join(", ")}»` : `«${node.kind}»`;
-  const lines = Object.entries(node.properties ?? {}).filter(([, value]) => Array.isArray(value) && value.length).flatMap(([name, values]) => [name[0].toUpperCase() + name.slice(1), ...values.map(String)]);
+  const visibleKeys = ["class", "block"].includes(node.kind)
+    ? (node.variant === "simple" ? new Set(["attributes"]) : new Set(["attributes", "operations"]))
+    : null;
+  const lines = Object.entries(node.properties ?? {})
+    .filter(([name, value]) => name !== "responsibilities" && (!visibleKeys || visibleKeys.has(name)) && Array.isArray(value) && value.length)
+    .flatMap(([name, values]) => [name[0].toUpperCase() + name.slice(1), ...values.map(String)]);
   let y = node.y + 20;
   const text = [`<text x="${node.x + node.width / 2}" y="${y}" text-anchor="middle" font-weight="700">${xml(node.name)}</text>`, `<text x="${node.x + node.width / 2}" y="${y + 16}" text-anchor="middle" font-size="10">${xml(stereotype)}</text>`];
   if (lines.length) {

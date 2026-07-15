@@ -75,7 +75,7 @@
 .compact-class-content, .object-compact-content { display: grid; height: 100%; place-items: center; border: var(--node-border-width, 1px) solid var(--node-border); background: var(--node-fill); font-weight: 800; text-align: center; text-decoration: none; }
 .object-compact-content { text-decoration: underline; }
 .structured-class-content { display: grid; height: 100%; border: var(--node-border-width, 1px) solid var(--node-border); background: var(--node-fill); overflow: hidden; }
-.interface-class-content { grid-template-rows: 48px repeat(3, 1fr); }
+.interface-class-content { grid-template-rows: 48px repeat(2, 1fr); }
 .template-class-content { grid-template-rows: 54px 1fr 1fr; }
 .structured-class-title { display: grid; place-items: center; min-height: 0; padding: 5px 8px; text-align: center; font-weight: 800; line-height: 1.18; overflow: hidden; cursor: text; }
 .structured-class-title strong { display: block; font-weight: 800; }

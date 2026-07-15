@@ -50,6 +50,13 @@ export const simpleShapeKinds = new Set([
 
 export const compartmentDefinitions = [
   { key: "attributes", label: "Attributes" },
-  { key: "operations", label: "Operations" },
-  { key: "responsibilities", label: "Responsibilities" }
+  { key: "operations", label: "Operations" }
 ];
+
+export const classBlockKinds = new Set(["class", "block"]);
+
+export function compartmentDefinitionsFor(node) {
+  return classBlockKinds.has(node?.kind) && node.variant === "simple"
+    ? compartmentDefinitions.slice(0, 1)
+    : compartmentDefinitions;
+}

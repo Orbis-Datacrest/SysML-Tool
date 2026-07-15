@@ -36,6 +36,7 @@ function validateElement(element, index, ids) {
   if (ids.has(element.id)) throw new Error(`Duplicate element id "${element.id}".`);
   ids.add(element.id);
   requireText(element.kind, `${label} kind`);
+  if (element.variant !== undefined && !["full", "simple"].includes(element.variant)) throw new Error(`${label} variant must be "full" or "simple".`);
   if (typeof element.name !== "string") throw new Error(`${label} name must be text.`);
   for (const key of ["x", "y"]) requireNumber(element[key], `${label} ${key}`);
   for (const key of ["width", "height"]) requireNumber(element[key], `${label} ${key}`, { positive: true });

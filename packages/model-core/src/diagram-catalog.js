@@ -1,4 +1,4 @@
-const node = (kind, label, shape = kind) => ({ type: "node", kind, label, shape });
+const node = (kind, label, shape = kind, variant) => ({ type: "node", kind, label, shape, ...(variant ? { variant } : {}) });
 const relationship = (kind, label, shape = kind) => ({ type: "relationship", kind, label, shape });
 
 export const commonElements = [
@@ -12,7 +12,7 @@ export const commonElements = [
 
 const definitions = [
   ["UML", "Structural", "uml-class", "Class Diagram", [
-    node("class", "Class"), node("compact-class", "Class 2"), node("interface-class", "Interface Class"),
+    node("class", "Class (Attributes & Operations)", "class", "full"), node("class", "Simple Class (Attributes)", "class", "simple"), node("interface-class", "Interface Class"),
     node("interface", "Interface"), node("template-class", "Template Class"), node("component", "Component"),
     node("nary-association", "N-ary Association"), node("object", "Object 1"), node("object-compact", "Object 2"),
     node("divider-vertical", "Divider (Vertical)"), node("self-association", "Self Association"),
@@ -61,7 +61,7 @@ const definitions = [
   ]],
   ["UML", "Behavioral", "uml-interaction-overview", "Interaction Overview Diagram", [node("interaction-use", "Interaction Use")]],
   ["SysML", "Structural", "sysml-bdd", "Block Definition Diagram (BDD)", [
-    node("block", "Block"), node("interface-block", "Interface Block"), node("value-type", "Value Type"), node("constraint-block", "Constraint Block"), node("unit", "Unit"), node("quantity-kind", "Quantity Kind")
+    node("block", "Block (Attributes & Operations)", "block", "full"), node("block", "Simple Block (Attributes)", "block", "simple"), node("interface-block", "Interface Block"), node("value-type", "Value Type"), node("constraint-block", "Constraint Block"), node("unit", "Unit"), node("quantity-kind", "Quantity Kind")
   ]],
   ["SysML", "Structural", "sysml-ibd", "Internal Block Diagram (IBD)", [
     node("part-property", "Part Property"), node("reference-property", "Reference Property"), node("proxy-port", "Proxy Port"), node("full-port", "Full Port"), relationship("connector", "Connector"), relationship("item-flow", "Item Flow")

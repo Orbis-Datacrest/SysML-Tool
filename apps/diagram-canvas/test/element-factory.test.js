@@ -7,6 +7,10 @@ test("element factory supplies presentation defaults without canvas DOM state", 
   assert.deepEqual(defaultSizeFor("unknown-kind"), { width: 190, height: 170 });
   assert.equal(defaultNameFor("template-class"), "Template Class");
   assert.equal(defaultNameFor("custom-node"), "Custom Node");
+  assert.deepEqual(defaultSizeFor("class", "full"), { width: 190, height: 170 });
+  assert.deepEqual(defaultSizeFor("class", "simple"), { width: 190, height: 120 });
+  assert.deepEqual(defaultPropertiesFor("block", { elements: [] }, "full"), { attributes: [], operations: [] });
+  assert.deepEqual(defaultPropertiesFor("block", { elements: [] }, "simple"), { attributes: [] });
 });
 
 test("requirement defaults use the next available requirement identifier", () => {

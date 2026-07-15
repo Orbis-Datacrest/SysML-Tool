@@ -140,6 +140,7 @@ export interface ModelRelationship extends TenantScoped {
 
 export interface DiagramElementReference {
   model_element_id: string;
+  variant?: "full" | "simple";
   x: number;
   y: number;
   width: number;
@@ -183,6 +184,7 @@ export interface DiagramElement {
   id: string;
   model_element_id?: string;
   kind: ElementKind;
+  variant?: "full" | "simple";
   name: string;
   x: number;
   y: number;

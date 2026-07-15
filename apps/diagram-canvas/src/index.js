@@ -7,7 +7,7 @@ import {
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
 import {
-  CANVAS, ZOOM, compartmentDefinitions, defaultNodeStyle, defaultPageSize, defaultRelationshipStyle,
+  CANVAS, ZOOM, compartmentDefinitionsFor, defaultNodeStyle, defaultPageSize, defaultRelationshipStyle,
   lightTextKinds, pageSizes, relationshipTypes, shortcutRows, simpleShapeKinds, themeNodeStyles
 } from "./config/canvasConfig.js";
 import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
@@ -181,7 +181,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const nodeKindClass = (kind) => `node-shape-${kind.replace(/[^a-z0-9-]/g, "")}`;
   const renderNodeContent = createNodeRenderer({ getEditingNode: () => editingNode });
   function fitNodeToContent(node) {
-    const editableSectionKeys = [...compartmentDefinitions.map(({ key }) => key), "text", "templateParameter", "upperMultiplicity", "lowerMultiplicity"];
+    const editableSectionKeys = [...compartmentDefinitionsFor(node).map(({ key }) => key), "text", "templateParameter", "upperMultiplicity", "lowerMultiplicity"];
     const sections = editableSectionKeys.map((key) => {
       const value = node.properties?.[key] ?? [];
       return Array.isArray(value) ? value : String(value).split(/\r?\n/);
@@ -1183,12 +1183,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
   }, { signal: lifecycle.signal });
   element.addEventListener("dragleave", (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove("drag-target-active"); }, { signal: lifecycle.signal });
-  function placePaletteElement(kind, clientX, clientY) {
+  function placePaletteElement(kind, clientX, clientY, variant = "full") {
     if (!elementKinds.includes(kind) || !state.diagram) return false;
     const rect = element.getBoundingClientRect();
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
     const point = pointOnCanvas({ clientX, clientY });
-    const size = defaultSizeFor(kind);
+    const structuralVariant = ["class", "block"].includes(kind) && variant === "simple" ? "simple" : "full";
+    const size = defaultSizeFor(kind, structuralVariant);
     const nodeId = id(kind);
     // Drop is a placement action, not a text-editing action. Entering edit mode
     // here caused the render guard to keep the drag preview DOM alive and hide
@@ -1196,7 +1197,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     paletteHover = null;
     pointerDrag = null;
     element.classList.remove("drag-target-active");
-    mutate((next) => next.elements.push({ id: nodeId, kind, name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next) }));
+    mutate((next) => next.elements.push({ id: nodeId, kind, ...(["class", "block"].includes(kind) ? { variant: structuralVariant } : {}), name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next, structuralVariant) }));
     setSelection([nodeId]);
     return true;
   }
@@ -1409,11 +1410,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     pointerDrag = detail;
     scheduleRender();
   }));
-  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, label, clientX, clientY }) => {
+  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, clientX, clientY }) => {
     const rect = element.getBoundingClientRect();
     const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     if (inside && isPaletteItemAllowed(state.diagram?.type, type, kind)) {
-      if (type === "node") placePaletteElement(kind, clientX, clientY);
+      if (type === "node") placePaletteElement(kind, clientX, clientY, variant);
       if (type === "relationship") { state.selectedTool = { type, kind, label }; setSelection([]); }
     }
     paletteHover = null; pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender();

@@ -7,7 +7,7 @@ const semanticKeys = {
   interface: ["operations", "receptions", "properties", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
   "interface-block": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
   "interface-definition": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
-  block: ["parts", "references", "values", "operations", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"],
+  block: ["attributes", "parts", "references", "values", "operations", "responsibilities", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"],
   requirement: ["requirementId", "text", "parentRequirementId", "owner", "verificationMethod", "verificationStatus", "approvalStatus", "risk", "priority", "baseline"],
   port: ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
   "proxy-port": ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
@@ -28,7 +28,7 @@ const legacyAliases = {
   "value-type": { quantity_kind: "quantityKind" }
 };
 
-const layoutKeys = new Set(["x", "y", "width", "height", "style", "locked", "groupId"]);
+const layoutKeys = new Set(["x", "y", "width", "height", "variant", "style", "locked", "groupId"]);
 const routeKeys = new Set(["style", "routing", "waypoints", "sourceAnchor", "targetAnchor", "labelPosition", "roleLabel", "multiplicity", "sourceMultiplicity"]);
 
 export const CURRENT_MODEL_SCHEMA_VERSION = 2;
