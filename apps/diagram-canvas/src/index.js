@@ -64,18 +64,11 @@ function placeCaretAtPoint(target, clientX, clientY) {
   selection.addRange(range);
 }
 
-const CUSTOM_COLOR_SWATCHES = ["#172033", "#FFFFFF", "#64748B", "#EF4444", "#F97316", "#FACC15", "#22C55E", "#14B8A6", "#3B82F6", "#6366F1", "#A855F7", "#EC4899"];
-
-function renderColorControl({ value, label, pickerKey, open = false, styleProperty = "", relationshipProperty = "" }) {
+function renderColorControl({ value, label, styleProperty = "", relationshipProperty = "" }) {
   const color = normalizeColor(value);
   const targetAttribute = styleProperty ? `data-style="${styleProperty}"` : `data-relationship-style="${relationshipProperty}"`;
-  const popoverId = `color-picker-${pickerKey.replace(/[^a-z0-9_-]/gi, "-")}`;
   return `<span class="color-control" data-color-control>
-    <button class="color-trigger" ${targetAttribute} data-color-input="palette" data-initial-color="${color}" data-color-value="${color}" type="button" data-color-toggle="${pickerKey}" aria-label="${open ? "Close" : "Open"} ${escapeHtml(label)} picker" aria-controls="${popoverId}" aria-expanded="${open}" title="Choose ${escapeHtml(label.toLowerCase())}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" fill="${color}"></rect></svg></button>
-    ${open ? `<div id="${popoverId}" class="color-popover" role="dialog" aria-label="${escapeHtml(label)} color palette">
-      <div class="color-popover-heading"><strong>${escapeHtml(label)}</strong><span>Select a color</span></div>
-      <div class="color-swatch-grid">${CUSTOM_COLOR_SWATCHES.map((swatch) => `<button type="button" class="color-swatch" data-color-choice="${swatch}" aria-label="Apply ${swatch}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" fill="${swatch}"></rect></svg></button>`).join("")}</div>
-    </div>` : ""}
+    <input class="color-trigger color-native" ${targetAttribute} data-color-input="native" data-initial-color="${color}" type="color" value="${color}" aria-label="Choose ${escapeHtml(label.toLowerCase())}" title="Choose ${escapeHtml(label.toLowerCase())}">
   </span>`;
 }
 
@@ -94,7 +87,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let paletteHover = null;
   let editingNode = null;
   let editingTimer = null;
-  let activeColorPicker = null;
+  let activeNativeColorInput = null;
   let pointerDrag = null;
   let minimapDrag = null;
   let renderFrame = null;
@@ -301,19 +294,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     positionPointerSurface(".relationship-toolbar", relationshipToolbar);
     positionPointerSurface(".canvas-context-menu", contextMenu);
     positionShortcutHelp();
-    positionColorPopover();
-  }
-
-  function positionColorPopover() {
-    const popover = element.querySelector(".color-popover");
-    const trigger = popover?.closest("[data-color-control]")?.querySelector("[data-color-toggle][aria-expanded='true']");
-    if (!popover || !trigger) return;
-    const host = element.getBoundingClientRect();
-    const anchor = trigger.getBoundingClientRect();
-    const left = clamp(anchor.left, host.left + 8, Math.max(host.left + 8, host.right - popover.offsetWidth - 8));
-    const below = anchor.bottom + 7;
-    const top = below + popover.offsetHeight <= host.bottom - 8 ? below : Math.max(host.top + 8, anchor.top - popover.offsetHeight - 7);
-    runtimeStyles.set("color-popover-position", ".color-popover", { left: `${left}px`, top: `${top}px` });
   }
 
   function positionShortcutHelp() {
@@ -340,9 +320,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     return `<div class="format-toolbar" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
       <div class="format-toolbar-row color-toolbar-row">
-        <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", pickerKey: "element:border", open: activeColorPicker === "element:border", styleProperty: "borderColor" })}</span>
-        <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", pickerKey: "element:fill", open: activeColorPicker === "element:fill", styleProperty: "fillColor" })}</span>
-        <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", pickerKey: "element:text", open: activeColorPicker === "element:text", styleProperty: "textColor" })}</span>
+        <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", styleProperty: "borderColor" })}</span>
+        <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", styleProperty: "fillColor" })}</span>
+        <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", styleProperty: "textColor" })}</span>
       </div>
       <div class="format-toolbar-row style-toolbar-row">
         <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
@@ -365,7 +345,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     return `<div class="relationship-toolbar" aria-label="Connection formatting toolbar">
       <select data-relationship-style="kind" title="Relation type">${relationshipTypes.map(([type, label]) => `<option value="${type}" ${relationship.kind === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       <label title="Line thickness">Line <select data-relationship-style="width">${[1, 2, 3, 4, 5].map((width) => `<option value="${width}" ${style.width === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <span class="format-field" title="Line and arrow color">Color ${renderColorControl({ value: style.color, label: "Line and arrow color", pickerKey: "relationship:color", open: activeColorPicker === "relationship:color", relationshipProperty: "color" })}</span>
+      <span class="format-field" title="Line and arrow color">Color ${renderColorControl({ value: style.color, label: "Line and arrow color", relationshipProperty: "color" })}</span>
       <input data-relationship-text="label" value="${escapeHtml(relationship.label ?? "")}" placeholder="Label" title="Connector label">
       <input data-relationship-text="roleLabel" value="${escapeHtml(relationship.roleLabel ?? "")}" placeholder="Role" title="Role label">
       <input data-relationship-text="multiplicity" value="${escapeHtml(relationship.multiplicity ?? "")}" placeholder="0..*" title="Multiplicity">
@@ -485,6 +465,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       cancelAnimationFrame(renderFrame);
       renderFrame = null;
     }
+    // Replacing the toolbar while a browser color dialog is open dismisses it
+    // immediately in Chrome and Firefox. Model changes still happen below via
+    // direct input listeners; defer the full canvas render until picking ends.
+    if (activeNativeColorInput?.isConnected) return;
     // Collaboration, presence, resize, and theme notifications can arrive while
     // the user is typing. Replacing the canvas DOM here would discard the
     // textarea, move the caret, and make typing feel delayed. Those visual
@@ -730,51 +714,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const allBold = selected.length > 0 && selected.every((node) => nodeStyle(node).textStyle === "bold");
       applyStyle("textStyle", allBold ? "normal" : "bold");
     }));
-    element.querySelectorAll("[data-color-toggle]").forEach((button) => {
-      let toggled = false;
-      const togglePicker = (event) => {
-        event.preventDefault(); event.stopPropagation();
-        if (toggled) return;
-        toggled = true;
-        // A selected node may still be in inline edit mode. Finish that edit
-        // before opening the palette so render() cannot suppress the popover.
-        const editor = element.querySelector("[data-node-editor]");
-        if (editor && editingNode) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editorValue(editor));
-        const pickerKey = button.dataset.colorToggle;
-        activeColorPicker = activeColorPicker === pickerKey ? null : pickerKey;
-        render();
-      };
-      // Pointer activation must open the palette before a rerender can detach
-      // the current toolbar. Click remains as the keyboard activation path.
-      button.addEventListener("pointerdown", (event) => { if (event.button === 0) togglePicker(event); });
-      button.addEventListener("click", togglePicker);
-    });
-    element.querySelectorAll("[data-color-choice]").forEach((button) => {
-      const input = button.closest("[data-color-control]")?.querySelector("[data-color-toggle]");
-      button.addEventListener("pointerenter", () => { if (input) previewColor(input, button.dataset.colorChoice); });
-      button.addEventListener("pointerleave", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
-      button.addEventListener("focus", () => { if (input) previewColor(input, button.dataset.colorChoice); });
-      button.addEventListener("blur", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
-      let applied = false;
-      const applyChoice = (event) => {
-        event.preventDefault(); event.stopPropagation();
-        if (!input || applied) return;
-        applied = true;
-        const value = normalizeColor(button.dataset.colorChoice, input.dataset.initialColor);
-        input.dataset.colorValue = value;
-        input.dataset.colorCommitted = "true";
-        previewColor(input, value);
-        activeColorPicker = null;
-        // Palette buttons are application controls, not form inputs. Commit
-        // their value directly so browser-specific input/change behavior cannot
-        // prevent the selected color from reaching the model.
-        if (input.dataset.style) applyStyle(input.dataset.style, value);
-        else if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, value);
-      };
-      // Apply before a canvas render can detach the popover and suppress click.
-      button.addEventListener("pointerdown", (event) => { if (event.button === 0) applyChoice(event); });
-      // Keyboard activation produces click without pointerdown.
-      button.addEventListener("click", applyChoice);
+    element.querySelectorAll("input[type='color'][data-color-input]").forEach((input) => {
+      // Keep these listeners on the input itself as well as the delegated host.
+      // A pending inline-editor blur can replace the toolbar while the native
+      // Chrome/Firefox picker is open, leaving its eventual change event detached.
+      input.addEventListener("input", () => previewColor(input));
+      input.addEventListener("change", () => { previewColor(input); commitColor(input); });
     });
     element.querySelector("[data-relationship-command='delete']")?.addEventListener("click", deleteSelectedRelationship);
     element.querySelector("[data-relationship-command='reroute']")?.addEventListener("click", () => mutate((next) => {
@@ -952,14 +897,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const control = input.closest("[data-color-control]");
     if (!control) return;
     const nativeInput = control.querySelector(".color-native");
-    const fallbackInput = control.querySelector(".color-fallback");
     const trigger = control.querySelector(".color-trigger");
     if (trigger) {
-      trigger.dataset.colorValue = value;
-      trigger.querySelector("rect")?.setAttribute("fill", value);
+      trigger.value = value;
     }
     if (nativeInput && nativeInput !== input) nativeInput.value = value;
-    if (fallbackInput && fallbackInput !== input) fallbackInput.value = value.toUpperCase();
     control.style.setProperty("--selected-color", value);
   }
 
@@ -1064,9 +1006,25 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function deleteSelection() { if (selectedIds().length) executeCommand("delete"); else deleteSelectedRelationship(); }
 
   element.addEventListener("pointerdown", (event) => {
+    const directColorInput = event.target.closest?.("input[type='color'][data-color-input]");
+    if (directColorInput && event.button === 0) {
+      // Open while the trusted pointer event is active. This also keeps the
+      // native picker alive when an inline editor blur rerenders the toolbar.
+      activeNativeColorInput = directColorInput;
+      if (typeof directColorInput.showPicker === "function") {
+        event.preventDefault();
+        try { directColorInput.showPicker(); } catch { directColorInput.click(); }
+      }
+      event.stopPropagation();
+      return;
+    }
+    if (activeNativeColorInput) {
+      activeNativeColorInput = null;
+      scheduleRender();
+    }
     if (editingNode && !event.target.closest("[data-node-editor]")) {
       const editor = element.querySelector("[data-node-editor]");
-      if (editor && event.target.closest("[data-color-toggle]")) {
+      if (editor && event.target.closest("[data-color-input]")) {
         // Keep the toolbar DOM alive through its click/change event. A
         // synchronous editor commit replaces that DOM on pointerdown, so the
         // browser never dispatches the color-picker click. Commit immediately
@@ -1127,7 +1085,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const input = event.target.closest("[data-style],[data-relationship-style]");
     if (!input) return;
     event.stopPropagation();
-    if (input.dataset.colorInput) { previewColor(input); activeColorPicker = null; commitColor(input); return; }
+    if (input.dataset.colorInput) { previewColor(input); commitColor(input); return; }
     if (input.dataset.style) {
       const numeric = input.dataset.style === "borderWidth" || input.dataset.style === "textSize";
       applyStyle(input.dataset.style, input.type === "color" ? input.value : numeric ? Number(input.value) : input.value);
@@ -1137,12 +1095,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("focusout", (event) => {
     const input = event.target.closest?.("[data-color-input]");
     if (input) commitColor(input);
-  }, { signal: lifecycle.signal });
-  element.addEventListener("keydown", (event) => {
-    const input = event.target.closest?.(".color-fallback");
-    if (!input || event.key !== "Enter") return;
-    event.preventDefault();
-    commitColor(input);
   }, { signal: lifecycle.signal });
   element.addEventListener("scroll", () => {
     if (viewportFrame !== null) return;
@@ -1158,11 +1110,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
   }, { signal: lifecycle.signal });
   window.addEventListener("pointerdown", (event) => {
-    if (activeColorPicker && !event.target.closest?.("[data-color-control]")) {
-      activeColorPicker = null;
-      render();
-      return;
-    }
     if (!shortcutHelpOpen || event.target.closest?.("#keyboard-help,.shortcut-overlay")) return;
     // Capture dismissal before canvas pointer handlers can replace the clicked DOM during a render.
     setShortcutHelpOpen(false);
@@ -1324,12 +1271,6 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }, { signal: lifecycle.signal });
 
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && activeColorPicker) {
-      event.preventDefault();
-      activeColorPicker = null;
-      render();
-      return;
-    }
     if (event.key === "Escape" && shortcutHelpOpen) {
       event.preventDefault();
       setShortcutHelpOpen(false);
