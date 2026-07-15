@@ -664,6 +664,20 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-node]").forEach((nodeElement) => {
       nodeElement.addEventListener("pointerdown", (event) => {
         if (event.target.closest(".node-inline-editor")) return;
+        if (editingNode) {
+          // Node pointer handlers stop propagation, so the canvas-level editor
+          // commit handler never sees a click on another element. Commit here
+          // and explicitly complete the navigation in the newly rendered DOM.
+          event.preventDefault();
+          event.stopPropagation();
+          const targetNodeId = nodeElement.dataset.node;
+          const editor = element.querySelector("[data-node-editor]");
+          if (editor) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editorValue(editor));
+          gesture = null;
+          snapGuides = [];
+          setSelection([targetNodeId]);
+          return;
+        }
         const pressedAt = performance.now();
         const repeatedPress = event.button === 0 && lastNodePress?.nodeId === nodeElement.dataset.node && pressedAt - lastNodePress.at < 500;
         lastNodePress = repeatedPress ? null : { nodeId: nodeElement.dataset.node, at: pressedAt };
@@ -716,25 +730,51 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const allBold = selected.length > 0 && selected.every((node) => nodeStyle(node).textStyle === "bold");
       applyStyle("textStyle", allBold ? "normal" : "bold");
     }));
-    element.querySelectorAll("[data-color-toggle]").forEach((button) => button.addEventListener("click", (event) => {
-      event.preventDefault(); event.stopPropagation();
-      activeColorPicker = activeColorPicker === button.dataset.colorToggle ? null : button.dataset.colorToggle;
-      render();
-    }));
+    element.querySelectorAll("[data-color-toggle]").forEach((button) => {
+      let toggled = false;
+      const togglePicker = (event) => {
+        event.preventDefault(); event.stopPropagation();
+        if (toggled) return;
+        toggled = true;
+        // A selected node may still be in inline edit mode. Finish that edit
+        // before opening the palette so render() cannot suppress the popover.
+        const editor = element.querySelector("[data-node-editor]");
+        if (editor && editingNode) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editorValue(editor));
+        const pickerKey = button.dataset.colorToggle;
+        activeColorPicker = activeColorPicker === pickerKey ? null : pickerKey;
+        render();
+      };
+      // Pointer activation must open the palette before a rerender can detach
+      // the current toolbar. Click remains as the keyboard activation path.
+      button.addEventListener("pointerdown", (event) => { if (event.button === 0) togglePicker(event); });
+      button.addEventListener("click", togglePicker);
+    });
     element.querySelectorAll("[data-color-choice]").forEach((button) => {
       const input = button.closest("[data-color-control]")?.querySelector("[data-color-toggle]");
       button.addEventListener("pointerenter", () => { if (input) previewColor(input, button.dataset.colorChoice); });
       button.addEventListener("pointerleave", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
       button.addEventListener("focus", () => { if (input) previewColor(input, button.dataset.colorChoice); });
       button.addEventListener("blur", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
-      button.addEventListener("click", (event) => {
+      let applied = false;
+      const applyChoice = (event) => {
         event.preventDefault(); event.stopPropagation();
-        if (!input) return;
-        input.dataset.colorValue = button.dataset.colorChoice;
-        previewColor(input);
+        if (!input || applied) return;
+        applied = true;
+        const value = normalizeColor(button.dataset.colorChoice, input.dataset.initialColor);
+        input.dataset.colorValue = value;
+        input.dataset.colorCommitted = "true";
+        previewColor(input, value);
         activeColorPicker = null;
-        commitColor(input);
-      });
+        // Palette buttons are application controls, not form inputs. Commit
+        // their value directly so browser-specific input/change behavior cannot
+        // prevent the selected color from reaching the model.
+        if (input.dataset.style) applyStyle(input.dataset.style, value);
+        else if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, value);
+      };
+      // Apply before a canvas render can detach the popover and suppress click.
+      button.addEventListener("pointerdown", (event) => { if (event.button === 0) applyChoice(event); });
+      // Keyboard activation produces click without pointerdown.
+      button.addEventListener("click", applyChoice);
     });
     element.querySelector("[data-relationship-command='delete']")?.addEventListener("click", deleteSelectedRelationship);
     element.querySelector("[data-relationship-command='reroute']")?.addEventListener("click", () => mutate((next) => {
@@ -1026,7 +1066,25 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("pointerdown", (event) => {
     if (editingNode && !event.target.closest("[data-node-editor]")) {
       const editor = element.querySelector("[data-node-editor]");
+      if (editor && event.target.closest("[data-color-toggle]")) {
+        // Keep the toolbar DOM alive through its click/change event. A
+        // synchronous editor commit replaces that DOM on pointerdown, so the
+        // browser never dispatches the color-picker click. Commit immediately
+        // after the control has handled the interaction instead.
+        const nodeId = editor.dataset.nodeEditor;
+        const section = editor.dataset.nodeSection;
+        const value = editorValue(editor);
+        // Prevent the button from stealing focus and firing the editor's blur
+        // commit before the ensuing click reaches the picker toggle.
+        event.preventDefault();
+        setTimeout(() => {
+          if (editingNode?.id === nodeId && editingNode.section === section) commitNodeEditing(nodeId, section, value);
+        }, 0);
+        return;
+      }
       if (editor) commitNodeEditing(editor.dataset.nodeEditor, editor.dataset.nodeSection, editorValue(editor));
+      gesture = null;
+      snapGuides = [];
       return;
     }
     if (event.pointerType === "touch") {

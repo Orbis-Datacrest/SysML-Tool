@@ -52,8 +52,8 @@ function renderShell() {
         <aside id="project-tools-sidebar" class="left-rail" data-open="${state.sidebarLayout.left.open}" aria-label="Project tools">
           <div class="sidebar-header"><button id="sidebar-toggle" class="sidebar-toggle" title="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-content" aria-expanded="${state.sidebarLayout.left.open}">☰</button><strong>Project tools</strong></div>
           <div id="project-tools-content" class="sidebar-content">
-            <section id="project-explorer"></section>
             <section id="project-import" class="project-import"></section>
+            <section id="project-explorer"></section>
             <section id="element-palette"></section>
             <section id="properties-panel"></section>
             <section id="project-validation" class="sidebar-bottom-panel"></section>
