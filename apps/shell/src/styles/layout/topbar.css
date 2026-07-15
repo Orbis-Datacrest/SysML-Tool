@@ -3,13 +3,13 @@
 .topbar-left { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
 .topbar-actions { min-width: 0; flex: 0 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .topbar-actions > * { flex: 0 0 auto; }
-.topbar button, .topbar .export-button, .topbar .top-project-name, .topbar .topbar-auth > button { height: 32px; min-height: 32px; display: inline-flex; align-items: center; }
+.topbar button, .topbar .export-button, .topbar .top-project-name, .topbar .topbar-auth > button { height: 28px; min-height: 28px; display: inline-flex; align-items: center; padding-top: 3px; padding-bottom: 3px; }
 .share-control { position: relative; }
 .share-button { display: inline-flex; height: 32px; align-items: center; gap: 7px; padding: 0 0 0 11px; border: 0; border-radius: 16px; background: color-mix(in srgb, var(--accent-2), var(--panel) 76%); color: var(--accent-2); font-weight: 800; }
 .share-button:hover { border-color: transparent; background: color-mix(in srgb, var(--accent-2), var(--panel) 66%); color: var(--accent-2); }
 .topbar .share-button span { margin: 0; color: inherit; }
 .topbar .share-lock { font-size: 14px; }
-.topbar .share-chevron { display: grid; width: 32px; height: 32px; place-items: center; border-left: 1px solid color-mix(in srgb, currentColor, transparent 76%); font-size: 12px; }
+.topbar .share-chevron { display: grid; width: 28px; height: 28px; place-items: center; border-left: 1px solid color-mix(in srgb, currentColor, transparent 76%); font-size: 12px; }
 .share-popover { position: absolute; top: calc(100% + 9px); right: 0; z-index: 150; width: 360px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 13px; background: var(--surface-elevated); color: var(--ink); box-shadow: 0 22px 60px var(--shadow-color); }
 .share-popover[hidden] { display: none; }
 .share-popover-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }

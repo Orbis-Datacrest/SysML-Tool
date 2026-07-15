@@ -69,13 +69,12 @@ const CUSTOM_COLOR_SWATCHES = ["#172033", "#FFFFFF", "#64748B", "#EF4444", "#F97
 function renderColorControl({ value, label, pickerKey, open = false, styleProperty = "", relationshipProperty = "" }) {
   const color = normalizeColor(value);
   const targetAttribute = styleProperty ? `data-style="${styleProperty}"` : `data-relationship-style="${relationshipProperty}"`;
+  const popoverId = `color-picker-${pickerKey.replace(/[^a-z0-9_-]/gi, "-")}`;
   return `<span class="color-control" data-color-control>
-    <button class="color-trigger" type="button" data-color-toggle="${pickerKey}" aria-label="Open ${escapeHtml(label)} picker" aria-expanded="${open}" title="Choose ${escapeHtml(label.toLowerCase())}"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="3" fill="${color}"></rect></svg></button>
-    <input class="color-fallback" ${targetAttribute} data-color-input="fallback" type="text" value="${color.toUpperCase()}" data-initial-color="${color}" inputmode="text" maxlength="7" pattern="#[0-9A-Fa-f]{6}" spellcheck="false" aria-label="${escapeHtml(label)} hex color" title="Enter a hex color such as #2D6EB3">
-    ${open ? `<div class="color-popover" role="dialog" aria-label="${escapeHtml(label)} color picker">
-      <div class="color-popover-heading"><strong>${escapeHtml(label)}</strong><span>Hover to preview · click to apply</span></div>
+    <button class="color-trigger" ${targetAttribute} data-color-input="palette" data-initial-color="${color}" data-color-value="${color}" type="button" data-color-toggle="${pickerKey}" aria-label="${open ? "Close" : "Open"} ${escapeHtml(label)} picker" aria-controls="${popoverId}" aria-expanded="${open}" title="Choose ${escapeHtml(label.toLowerCase())}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" fill="${color}"></rect></svg></button>
+    ${open ? `<div id="${popoverId}" class="color-popover" role="dialog" aria-label="${escapeHtml(label)} color palette">
+      <div class="color-popover-heading"><strong>${escapeHtml(label)}</strong><span>Select a color</span></div>
       <div class="color-swatch-grid">${CUSTOM_COLOR_SWATCHES.map((swatch) => `<button type="button" class="color-swatch" data-color-choice="${swatch}" aria-label="Apply ${swatch}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="4" fill="${swatch}"></rect></svg></button>`).join("")}</div>
-      <label class="native-color-option">More colors <input class="color-native" ${targetAttribute} data-color-input="native" type="color" value="${color}" data-initial-color="${color}" aria-label="${escapeHtml(label)} system color picker"></label>
     </div>` : ""}
   </span>`;
 }
@@ -307,7 +306,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function positionColorPopover() {
     const popover = element.querySelector(".color-popover");
-    const trigger = popover?.closest("[data-color-control]")?.querySelector("[data-color-toggle]");
+    const trigger = popover?.closest("[data-color-control]")?.querySelector("[data-color-toggle][aria-expanded='true']");
     if (!popover || !trigger) return;
     const host = element.getBoundingClientRect();
     const anchor = trigger.getBoundingClientRect();
@@ -340,17 +339,21 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const style = nodeStyle(selected[0]);
     return `<div class="format-toolbar" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
-      <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", pickerKey: "element:border", open: activeColorPicker === "element:border", styleProperty: "borderColor" })}</span>
-      <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", pickerKey: "element:fill", open: activeColorPicker === "element:fill", styleProperty: "fillColor" })}</span>
-      <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
-      <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", pickerKey: "element:text", open: activeColorPicker === "element:text", styleProperty: "textColor" })}</span>
-      <label title="Text size">Size <select data-style="textSize">${[10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32].map((size) => `<option value="${size}" ${style.textSize === size ? "selected" : ""}>${size}px</option>`).join("")}</select></label>
-      <label title="Text style">Style <select data-style="textStyle">
+      <div class="format-toolbar-row color-toolbar-row">
+        <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", pickerKey: "element:border", open: activeColorPicker === "element:border", styleProperty: "borderColor" })}</span>
+        <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", pickerKey: "element:fill", open: activeColorPicker === "element:fill", styleProperty: "fillColor" })}</span>
+        <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", pickerKey: "element:text", open: activeColorPicker === "element:text", styleProperty: "textColor" })}</span>
+      </div>
+      <div class="format-toolbar-row style-toolbar-row">
+        <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
+        <label title="Text size">Size <select data-style="textSize">${[10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32].map((size) => `<option value="${size}" ${style.textSize === size ? "selected" : ""}>${size}px</option>`).join("")}</select></label>
+        <label title="Text style">Style <select data-style="textStyle">
         <option value="normal" ${style.textStyle === "normal" ? "selected" : ""}>Normal</option>
         <option value="bold" ${style.textStyle === "bold" ? "selected" : ""}>Bold</option>
         <option value="italic" ${style.textStyle === "italic" ? "selected" : ""}>Italic</option>
         <option value="bold-italic" ${style.textStyle === "bold-italic" ? "selected" : ""}>Bold italic</option>
-      </select></label>
+        </select></label>
+      </div>
     </div>`;
   }
 
@@ -719,15 +722,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       render();
     }));
     element.querySelectorAll("[data-color-choice]").forEach((button) => {
-      const input = button.closest("[data-color-control]")?.querySelector(".color-fallback");
+      const input = button.closest("[data-color-control]")?.querySelector("[data-color-toggle]");
       button.addEventListener("pointerenter", () => { if (input) previewColor(input, button.dataset.colorChoice); });
-      button.addEventListener("pointerleave", () => { if (input) previewColor(input, normalizeColor(input.value, input.dataset.initialColor)); });
+      button.addEventListener("pointerleave", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
       button.addEventListener("focus", () => { if (input) previewColor(input, button.dataset.colorChoice); });
-      button.addEventListener("blur", () => { if (input) previewColor(input, normalizeColor(input.value, input.dataset.initialColor)); });
+      button.addEventListener("blur", () => { if (input && input.dataset.colorCommitted !== "true") previewColor(input, input.dataset.initialColor); });
       button.addEventListener("click", (event) => {
         event.preventDefault(); event.stopPropagation();
         if (!input) return;
-        input.value = button.dataset.colorChoice;
+        input.dataset.colorValue = button.dataset.colorChoice;
         previewColor(input);
         activeColorPicker = null;
         commitColor(input);
@@ -900,6 +903,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function colorValueFromInput(input) {
+    if (input.dataset.colorValue) return normalizeColor(input.dataset.colorValue, input.dataset.initialColor);
     if (input.type === "color") return normalizeColor(input.value, input.dataset.initialColor);
     return isColorInputValue(input.value) ? normalizeColor(input.value, input.dataset.initialColor) : null;
   }
@@ -909,7 +913,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!control) return;
     const nativeInput = control.querySelector(".color-native");
     const fallbackInput = control.querySelector(".color-fallback");
-    control.querySelector(".color-trigger rect")?.setAttribute("fill", value);
+    const trigger = control.querySelector(".color-trigger");
+    if (trigger) {
+      trigger.dataset.colorValue = value;
+      trigger.querySelector("rect")?.setAttribute("fill", value);
+    }
     if (nativeInput && nativeInput !== input) nativeInput.value = value;
     if (fallbackInput && fallbackInput !== input) fallbackInput.value = value.toUpperCase();
     control.style.setProperty("--selected-color", value);
@@ -1124,9 +1132,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const point = pointOnCanvas({ clientX, clientY });
     const size = defaultSizeFor(kind);
     const nodeId = id(kind);
-    editingNode = { id: nodeId, section: "name" };
-    mutate((next) => next.elements.push({ id: nodeId, kind, name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next) }));
+    // Drop is a placement action, not a text-editing action. Entering edit mode
+    // here caused the render guard to keep the drag preview DOM alive and hide
+    // subsequent placements until the page was refreshed.
     paletteHover = null;
+    pointerDrag = null;
+    element.classList.remove("drag-target-active");
+    mutate((next) => next.elements.push({ id: nodeId, kind, name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next) }));
     setSelection([nodeId]);
     return true;
   }
@@ -1346,9 +1358,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       if (type === "node") placePaletteElement(kind, clientX, clientY);
       if (type === "relationship") { state.selectedTool = { type, kind, label }; setSelection([]); }
     }
-    pointerDrag = null; scheduleRender();
+    paletteHover = null; pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender();
   }));
-  subscriptions.push(bus.on("palette:dragend", () => { pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender(); }));
+  subscriptions.push(bus.on("palette:dragend", () => { paletteHover = null; pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender(); }));
   subscriptions.push(bus.on("model:focus", (modelId) => {
     const node = state.diagram?.elements.find((item) => (item.model_element_id ?? item.id) === modelId);
     if (!node) return;

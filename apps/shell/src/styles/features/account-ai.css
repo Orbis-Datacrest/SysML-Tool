@@ -30,7 +30,7 @@ select, input { width: 100%; border: 1px solid var(--line); border-radius: 6px; 
 .left-account button { height: 34px; }
 .left-account .auth-user { padding: 3px 0; }
 .topbar-auth { position: relative; min-width: 74px; }
-.topbar-auth > button { height: 36px; white-space: nowrap; }
+.topbar-auth > button { height: 28px; min-height: 28px; white-space: nowrap; }
 .auth-entry-actions { display: flex; align-items: center; gap: 6px; }
 .auth-entry-actions button { white-space: nowrap; }
 .auth-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--backdrop); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
