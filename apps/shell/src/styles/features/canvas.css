@@ -95,7 +95,7 @@
 .callout-dot { position: absolute; bottom: 0; left: 0; width: 14px; height: 14px; border-radius: 50%; background: var(--node-border); }
 .callout-curve { position: absolute; right: 10px; bottom: 8px; width: 140px; height: 140px; border-right: 3px solid var(--node-border); border-bottom: 3px solid var(--node-border); border-radius: 0 0 120px; transform: skew(-10deg) rotate(-5deg); transform-origin: bottom right; }
 .callout-text { position: absolute; top: 4px; left: 18px; color: var(--node-text-color, var(--ink)); font-weight: 700; }
-.text-label-content, .symbol-content { display: grid; height: 100%; place-items: center; color: var(--node-text-color, var(--ink)); font-weight: 700; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+.text-label-content, .symbol-content { display: grid; height: 100%; place-items: center; color: var(--node-text-color, var(--ink)); font-weight: var(--node-font-weight, 400); text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
 .symbol-content { font-size: calc(var(--node-text-size, 13px) + 3px); }
 .circle-shape { position: absolute; inset: 8px; border: 3px solid var(--node-border); border-radius: 50%; background: var(--node-border); }
 .circle-shape.final { border-color: var(--node-border); background: radial-gradient(circle, var(--node-border) 0 48%, var(--node-fill) 51% 67%, var(--node-border) 70%); }
@@ -233,3 +233,31 @@
 .canvas-context-menu kbd { color: var(--muted); font: 10px/1.5 inherit; }
 .context-separator { height: 1px; margin: 4px; background: var(--line); }
 .relationship-selected { color: var(--warning); }
+.canvas-workarea { display: grid; min-width: 0; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+.diagram-tabs { display: flex; min-width: 0; height: 42px; align-items: stretch; border-top: 1px solid var(--line); background: var(--panel); }
+.diagram-tab-list { display: flex; min-width: 0; flex: 1; align-items: stretch; overflow-x: auto; }
+.diagram-tab { display: flex; min-width: 116px; max-width: 220px; align-items: center; border-right: 1px solid var(--line); color: var(--muted); }
+.diagram-tab.active { background: var(--canvas); color: var(--ink); box-shadow: inset 0 3px var(--accent); }
+.diagram-tab-select { min-width: 0; flex: 1; height: 100%; padding: 0 6px 0 12px; border: 0; background: transparent; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diagram-tab-name-editor { min-width: 0; width: 100%; height: 30px; margin: 0 3px 0 6px; padding: 3px 6px; border: 2px solid var(--accent-2); border-radius: 5px; background: var(--surface-input); color: var(--ink); outline: 3px solid var(--focus-ring); font: inherit; }
+.diagram-tab-close, .add-diagram-tab { border: 0; background: transparent; color: var(--muted); font-size: 18px; }
+.diagram-tab-close { width: 30px; height: 30px; padding: 0; border-radius: 5px; }
+.diagram-tab-close:hover, .add-diagram-tab:hover { background: var(--surface-control-hover); color: var(--ink); }
+.add-diagram-tab { width: 48px; flex: 0 0 auto; border-right: 1px solid var(--line); }
+.add-diagram-tab svg { display: block; margin: auto; }
+.tab-dirty { color: var(--accent); font-size: 8px; }
+.create-tab-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--backdrop); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+.create-tab-dialog { width: min(440px, calc(100vw - 40px)); border: 1px solid var(--border-strong); border-radius: 14px; background: var(--panel-2); box-shadow: 0 30px 90px var(--shadow-color); }
+.create-tab-dialog header { padding: 22px 24px 16px; border-bottom: 1px solid var(--line); }
+.create-tab-dialog h2 { margin: 0; color: var(--ink); font-size: 18px; }
+.create-tab-dialog p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.create-tab-dialog form { display: grid; gap: 10px; padding: 20px 24px 24px; }
+.create-tab-dialog label { color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.create-tab-dialog select { width: 100%; height: 42px; }
+.create-tab-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.create-tab-actions button { min-width: 92px; }
+.tab-selection-list { display: grid; max-height: min(320px, 45vh); gap: 6px; margin: 0; padding: 0; border: 0; overflow-y: auto; }
+.tab-selection-list legend { margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.create-tab-dialog .tab-selection-list label { display: flex; min-height: 42px; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font-size: 13px; font-weight: 650; letter-spacing: normal; text-transform: none; cursor: pointer; }
+.tab-selection-list label:hover { border-color: var(--accent-2); background: var(--surface-control-hover); }
+.tab-selection-list input { width: 17px; height: 17px; accent-color: var(--accent-2); }

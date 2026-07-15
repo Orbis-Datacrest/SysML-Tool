@@ -73,6 +73,7 @@ function renderColorControl({ value, label, styleProperty = "", relationshipProp
 }
 
 registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft }) => {
+  const mountedDiagramId = state.diagram?.id;
   const lifecycle = new AbortController();
   const runtimeStyles = createScopedStyles(element, "diagram-canvas");
   const subscriptions = [];
@@ -1130,7 +1131,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
   }, { signal: lifecycle.signal });
   element.addEventListener("dragleave", (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove("drag-target-active"); }, { signal: lifecycle.signal });
-  function placePaletteElement(kind, clientX, clientY, variant = "full") {
+  function placePaletteElement(kind, clientX, clientY, variant = "full", textPreset = null, label = "") {
     if (!elementKinds.includes(kind) || !state.diagram) return false;
     const rect = element.getBoundingClientRect();
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
@@ -1144,7 +1145,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     paletteHover = null;
     pointerDrag = null;
     element.classList.remove("drag-target-active");
-    mutate((next) => next.elements.push({ id: nodeId, kind, ...(["class", "block"].includes(kind) ? { variant: structuralVariant } : {}), name: defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, properties: defaultPropertiesFor(kind, next, structuralVariant) }));
+    mutate((next) => next.elements.push({ id: nodeId, kind, ...(["class", "block"].includes(kind) ? { variant: structuralVariant } : {}), name: textPreset ? label : defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, ...(textPreset ? { style: textPreset } : {}), properties: defaultPropertiesFor(kind, next, structuralVariant) }));
     setSelection([nodeId]);
     return true;
   }
@@ -1351,11 +1352,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     pointerDrag = detail;
     scheduleRender();
   }));
-  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, clientX, clientY }) => {
+  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, textPreset, clientX, clientY }) => {
     const rect = element.getBoundingClientRect();
     const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     if (inside && isPaletteItemAllowed(state.diagram?.type, type, kind)) {
-      if (type === "node") placePaletteElement(kind, clientX, clientY, variant);
+      if (type === "node") placePaletteElement(kind, clientX, clientY, variant, textPreset, label);
       if (type === "relationship") { state.selectedTool = { type, kind, label }; setSelection([]); }
     }
     paletteHover = null; pointerDrag = null; element.classList.remove("drag-target-active"); scheduleRender();
@@ -1377,7 +1378,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.scrollTop = state.canvasViewport?.scrollTop ?? 0;
   syncMinimapViewport();
   return () => {
-    state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
+    const viewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
+    if (mountedDiagramId) state.tabStates[mountedDiagramId] = { ...(state.tabStates[mountedDiagramId] ?? {}), viewport };
+    if (state.diagram?.id === mountedDiagramId) state.canvasViewport = viewport;
     lifecycle.abort();
     subscriptions.splice(0).forEach((unsubscribe) => unsubscribe());
     if (renderFrame !== null) cancelAnimationFrame(renderFrame);

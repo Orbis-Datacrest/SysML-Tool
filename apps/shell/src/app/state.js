@@ -25,6 +25,8 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
     project: null,
     diagram: null,
     diagrams: [],
+    tabStates: {},
+    dirtyTabIds: new Set(),
     modelRepository: { schema_version: 2, elements: [], relationships: [] },
     selectedElementIds: [],
     selectedRelationshipId: null,
@@ -37,6 +39,29 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
   };
 }
 
+export function rememberActiveTabState(state) {
+  if (!state.diagram?.id) return;
+  state.tabStates[state.diagram.id] = {
+    viewport: structuredClone(state.canvasViewport),
+    history: structuredClone(state.history),
+    future: structuredClone(state.future),
+    selectedElementIds: [...state.selectedElementIds],
+    selectedRelationshipId: state.selectedRelationshipId
+  };
+}
+
+export function activateDiagramTab(state, diagram) {
+  rememberActiveTabState(state);
+  state.diagram = diagram;
+  const saved = state.tabStates[diagram.id];
+  state.canvasViewport = structuredClone(saved?.viewport ?? { zoom: 1, scrollLeft: 0, scrollTop: 0 });
+  state.history = structuredClone(saved?.history ?? []);
+  state.future = structuredClone(saved?.future ?? []);
+  state.selectedElementIds = [...(saved?.selectedElementIds ?? [])];
+  state.selectedRelationshipId = saved?.selectedRelationshipId ?? null;
+  state.selectedTool = { type: "select", kind: null, label: "" };
+}
+
 export function resetEditorInteractionState(state) {
   state.selectedElementIds = [];
   state.selectedRelationshipId = null;
@@ -44,4 +69,6 @@ export function resetEditorInteractionState(state) {
   state.canvasViewport = { zoom: 1, scrollLeft: 0, scrollTop: 0 };
   state.history = [];
   state.future = [];
+  state.tabStates = {};
+  state.dirtyTabIds = new Set();
 }

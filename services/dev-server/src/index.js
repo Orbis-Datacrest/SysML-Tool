@@ -164,10 +164,12 @@ function recordProjectOpen(tenantId, userId, projectId) {
   `).run(createId("recent"), tenantId, userId, projectId, now());
 }
 
-function createProjectSnapshot(tenantId, projectId, description = "Auto Save", actorId = null) {
+function createProjectSnapshot(tenantId, projectId, description = "Auto Save", actorId = null, diagramIds = null) {
   const project = db.prepare("SELECT * FROM projects WHERE id = ? AND tenant_id = ?").get(projectId, tenantId);
   if (!project) return null;
-  const diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map(diagramFromRow);
+  const selectedIds = Array.isArray(diagramIds) ? new Set(diagramIds) : null;
+  const diagrams = db.prepare("SELECT * FROM diagrams WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map(diagramFromRow).filter((diagram) => !selectedIds || selectedIds.has(diagram.id));
+  if (!diagrams.length) return null;
   const current = db.prepare("SELECT MAX(version) AS version FROM project_snapshots WHERE project_id = ? AND tenant_id = ?").get(projectId, tenantId);
   const version = Number(current.version ?? 0) + 1;
   const item = {
@@ -189,11 +191,14 @@ function createProjectSnapshot(tenantId, projectId, description = "Auto Save", a
 
 function snapshotsForProject(tenantId, projectId) {
   return db.prepare(`
-    SELECT id, project_id, version, description, created_by, created_at
+    SELECT id, project_id, version, description, snapshot, created_by, created_at
     FROM project_snapshots
     WHERE tenant_id = ? AND project_id = ?
     ORDER BY version DESC
-  `).all(tenantId, projectId);
+  `).all(tenantId, projectId).map(({ snapshot, ...row }) => {
+    const diagrams = json(snapshot, {}).diagrams ?? [];
+    return { ...row, diagrams: diagrams.map(({ id, name }) => ({ id, name })) };
+  });
 }
 
 function snapshotPayload(tenantId, projectId, version) {
@@ -848,6 +853,19 @@ async function api(req, res, urlOrPath) {
     }
     recordProjectOpen(tenantId, user?.id, project.id);
     return send(res, 200, { project: projectWithStats({ ...project, diagram_count: diagrams.length, last_opened_at: now() }), diagrams });
+  }
+
+  const projectMilestoneMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions\/milestone$/);
+  if (projectMilestoneMatch && req.method === "POST") {
+    const context = requireProjectPermission(req, res, projectMilestoneMatch[1], "edit");
+    if (!context) return;
+    const input = await body(req);
+    const diagramIds = [...new Set(Array.isArray(input.diagram_ids) ? input.diagram_ids.map(String) : [])];
+    if (!diagramIds.length) return send(res, 422, { error: "Select at least one tab for the milestone" });
+    const owned = db.prepare("SELECT id FROM diagrams WHERE project_id = ? AND tenant_id = ?").all(context.project.id, context.tenantId).map(({ id }) => id);
+    if (diagramIds.some((id) => !owned.includes(id))) return send(res, 422, { error: "A selected tab does not belong to this project" });
+    const snapshot = createProjectSnapshot(context.tenantId, context.project.id, input.description || "Tab milestone", context.user?.id ?? null, diagramIds);
+    return send(res, 201, { milestone: snapshot, versions: snapshotsForProject(context.tenantId, context.project.id) });
   }
 
   const projectVersionsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/versions$/);

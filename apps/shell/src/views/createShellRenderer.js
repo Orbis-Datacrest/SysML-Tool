@@ -1,10 +1,11 @@
 import { clampSidebarWidth, nextRightPanelState, persistSidebarLayout, SIDEBAR_CONSTRAINTS } from "../app/sidebarLayout.js";
 import { resetEditorInteractionState } from "../app/state.js";
 import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js";
+import { diagramCatalog } from "../../../../packages/model-core/src/diagram-catalog.js";
 
 export function createShellRenderer({
-  api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
-  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
+  activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
+  redoDiagram, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 }) {
 let cleanupSidebarInteractions = () => {};
 let cleanupMountedModules = () => {};
@@ -61,7 +62,13 @@ function renderShell() {
           <section id="left-account" class="left-account" aria-label="Signed in account"></section>
           <div class="sidebar-resize-handle" data-resize-sidebar="left" role="separator" aria-label="Resize project tools" aria-orientation="vertical" aria-valuemin="${SIDEBAR_CONSTRAINTS.left.minimum}" aria-valuemax="${SIDEBAR_CONSTRAINTS.left.maximum}" aria-valuenow="${state.sidebarLayout.left.width}" tabindex="0"></div>
         </aside>
-        <section id="diagram-canvas" class="canvas-host"></section>
+        <section class="canvas-workarea">
+          <section id="diagram-canvas" class="canvas-host"></section>
+          <nav class="diagram-tabs" aria-label="Diagram tabs">
+            <button id="add-diagram-tab" class="add-diagram-tab" title="Create diagram tab" aria-label="Create diagram tab"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-folder-plus" viewBox="0 0 16 16" aria-hidden="true"><path d="m.5 3 .04.87a2 2 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2m5.672-1a1 1 0 0 1 .707.293L7.586 3H2.19q-.362.002-.683.12L1.5 2.98a1 1 0 0 1 1-.98z"/><path d="M13.5 9a.5.5 0 0 1 .5.5V11h1.5a.5.5 0 1 1 0 1H14v1.5a.5.5 0 1 1-1 0V12h-1.5a.5.5 0 0 1 0-1H13V9.5a.5.5 0 0 1 .5-.5"/></svg></button>
+            <div class="diagram-tab-list" role="tablist">${state.diagrams.map((diagram) => `<div class="diagram-tab ${diagram.id === state.diagram?.id ? "active" : ""}" data-tab-id="${escapeHtml(diagram.id)}"><button class="diagram-tab-select" role="tab" aria-selected="${diagram.id === state.diagram?.id}" title="Switch to ${escapeHtml(diagram.name)}">${escapeHtml(diagram.name)}</button>${state.dirtyTabIds.has(diagram.id) ? `<span class="tab-dirty" title="Unsaved changes">●</span>` : ""}<button class="diagram-tab-close" title="Close ${escapeHtml(diagram.name)}" aria-label="Close ${escapeHtml(diagram.name)}">×</button></div>`).join("")}</div>
+          </nav>
+        </section>
         <aside id="ai-advisor-sidebar" class="right-rail" data-open="${state.sidebarLayout.right.open}" aria-label="${state.rightPanel === "history" ? "Project history" : "AI advisor"}">
           <div class="sidebar-header right-sidebar-header">
             <strong>${state.rightPanel === "history" ? "History" : "AI advisor"}</strong>
@@ -72,9 +79,9 @@ function renderShell() {
               <div class="history-sidebar-summary"><div><span class="history-state-dot"></span><strong>Current workspace</strong></div><small>Your active project state</small></div>
               <div class="history-state-list" role="listbox" aria-label="Available project states">
                 <button class="history-state-card ${state.selectedHistoryVersion === "current" ? "selected" : ""}" data-history-version="current" role="option" aria-selected="${state.selectedHistoryVersion === "current"}"><span><strong>Current workspace</strong><small>Unsaved and latest saved changes</small></span><span class="current-state-badge">Current</span></button>
-                ${state.versionHistory.map((item) => `<button class="history-state-card ${String(state.selectedHistoryVersion) === String(item.version) ? "selected" : ""}" data-history-version="${item.version}" role="option" aria-selected="${String(state.selectedHistoryVersion) === String(item.version)}"><span><strong>Version ${item.version}</strong><small>${escapeHtml(item.description || "Saved project state")} · ${new Date(item.created_at).toLocaleString()}</small></span>${String(state.selectedHistoryVersion) === String(item.version) ? `<span class="selected-state-badge">Selected</span>` : ""}</button>`).join("") || `<p class="history-empty">No saved states yet. Use Save Diagram to create one.</p>`}
+                ${state.versionHistory.map((item) => `<button class="history-state-card ${String(state.selectedHistoryVersion) === String(item.version) ? "selected" : ""}" data-history-version="${item.version}" role="option" aria-selected="${String(state.selectedHistoryVersion) === String(item.version)}"><span><strong>Version ${item.version}</strong><small>${escapeHtml(item.description || "Saved tab milestone")} · ${(item.diagrams ?? []).length} tab${(item.diagrams ?? []).length === 1 ? "" : "s"} · ${new Date(item.created_at).toLocaleString()}</small></span>${String(state.selectedHistoryVersion) === String(item.version) ? `<span class="selected-state-badge">Selected</span>` : ""}</button>`).join("") || `<p class="history-empty">No saved states yet. Use Save Diagram to create one.</p>`}
               </div>
-              <div class="history-sidebar-actions"><button id="refresh-history" type="button">Refresh</button><button id="restore-selected-version" class="primary" type="button" ${state.selectedHistoryVersion === "current" ? "disabled" : ""}>Restore selected state</button></div>
+              <div class="history-sidebar-actions"><button id="refresh-history" type="button">Refresh</button><button id="restore-selected-version" class="primary" type="button" ${state.selectedHistoryVersion === "current" ? "disabled" : ""}>Restore tabs</button></div>
             </section>` : `<section id="ai-advisor"></section><div class="ai-settings-actions"><button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="${state.settingsOpen}" aria-controls="auth-tenant-settings">${state.settingsOpen ? "Close Settings" : "Settings"}</button></div>${state.settingsOpen ? `<section id="auth-tenant-settings" class="ai-settings-slot"></section>` : ""}`}
           </div>
           <div class="sidebar-resize-handle" data-resize-sidebar="right" role="separator" aria-label="Resize assistant panel" aria-orientation="vertical" aria-valuemin="${SIDEBAR_CONSTRAINTS.right.minimum}" aria-valuemax="${SIDEBAR_CONSTRAINTS.right.maximum}" aria-valuenow="${state.sidebarLayout.right.width}" tabindex="0"></div>
@@ -135,6 +142,124 @@ function renderShell() {
 
   document.querySelector("#brand-home")?.addEventListener("click", () => {
     if (state.view === "editor") showDashboard();
+  });
+  const switchTab = (diagram) => {
+    if (!diagram || diagram.id === state.diagram?.id) return;
+    activateDiagramTab(state, diagram);
+    state.saveStatus = state.dirtyTabIds.has(diagram.id) ? "Unsaved" : "";
+    renderShell();
+    bus.emit("diagram:changed", diagram);
+  };
+  document.querySelectorAll(".diagram-tab").forEach((tab) => {
+    tab.querySelector(".diagram-tab-select")?.addEventListener("click", () => switchTab(state.diagrams.find((item) => item.id === tab.dataset.tabId)));
+    tab.querySelector(".diagram-tab-select")?.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      const diagram = state.diagrams.find((item) => item.id === tab.dataset.tabId);
+      const button = event.currentTarget;
+      if (!diagram || !button?.isConnected) return;
+      const input = document.createElement("input");
+      input.className = "diagram-tab-name-editor";
+      input.value = diagram.name;
+      input.setAttribute("aria-label", "Diagram tab name");
+      button.replaceWith(input);
+      let finished = false;
+      const finish = async (save) => {
+        if (finished) return;
+        finished = true;
+        const name = input.value.trim();
+        if (save && name && name !== diagram.name) {
+          try {
+            const renamed = await api.request(`/api/diagrams/${diagram.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+            state.diagrams = state.diagrams.map((item) => item.id === renamed.id ? { ...item, name: renamed.name, updated_at: renamed.updated_at } : item);
+            if (state.diagram?.id === renamed.id) state.diagram = { ...state.diagram, name: renamed.name, updated_at: renamed.updated_at };
+          } catch (error) { bus.emit("toast", error.message); }
+        }
+        renderShell();
+      };
+      input.addEventListener("keydown", (keyEvent) => {
+        if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); }
+        if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); }
+      });
+      input.addEventListener("blur", () => finish(true));
+      input.focus();
+      input.select();
+    });
+    tab.querySelector(".diagram-tab-close")?.addEventListener("click", () => {
+      const diagram = state.diagrams.find((item) => item.id === tab.dataset.tabId);
+      if (!diagram || state.diagrams.length === 1) { bus.emit("toast", "A project must keep at least one tab."); return; }
+      const isNotEmpty = (diagram.elements?.length ?? 0) > 0 || (diagram.relationships?.length ?? 0) > 0;
+      const deleteTab = async (deleteButton = null) => {
+        if (deleteButton) deleteButton.disabled = true;
+        try {
+          cancelAutoSave(diagram.id);
+          await api.request(`/api/diagrams/${diagram.id}`, { method: "DELETE" });
+          const index = state.diagrams.findIndex((item) => item.id === diagram.id);
+          state.diagrams = state.diagrams.filter((item) => item.id !== diagram.id);
+          delete state.tabStates[diagram.id]; state.dirtyTabIds.delete(diagram.id);
+          if (state.diagram?.id === diagram.id) activateDiagramTab(state, state.diagrams[Math.min(index, state.diagrams.length - 1)]);
+          renderShell();
+          bus.emit("diagram:changed", state.diagram);
+        } catch (error) {
+          if (deleteButton) deleteButton.disabled = false;
+          bus.emit("toast", error.message);
+        }
+      };
+      if (!isNotEmpty) { deleteTab(); return; }
+      if (document.querySelector("#delete-tab-dialog")) return;
+      const backdrop = document.createElement("div");
+      backdrop.className = "logout-confirmation-backdrop";
+      backdrop.innerHTML = `<section id="delete-tab-dialog" class="logout-confirmation" role="dialog" aria-modal="true" aria-labelledby="delete-tab-title" aria-describedby="delete-tab-description" tabindex="-1"><div class="logout-confirmation-icon" aria-hidden="true">!</div><div class="logout-confirmation-copy"><h2 id="delete-tab-title">Delete tab?</h2><p id="delete-tab-description">“${escapeHtml(diagram.name)}” is not empty. Deleting it will permanently remove its elements and relationships.</p></div><div class="logout-confirmation-actions"><button id="cancel-delete-tab" type="button">Cancel</button><button id="confirm-delete-tab" class="danger" type="button">Delete</button></div></section>`;
+      workspace.append(backdrop);
+      const dialog = backdrop.querySelector("#delete-tab-dialog");
+      const close = () => backdrop.remove();
+      backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+      backdrop.querySelector("#cancel-delete-tab").addEventListener("click", close);
+      backdrop.querySelector("#confirm-delete-tab").addEventListener("click", (event) => deleteTab(event.currentTarget));
+      dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } });
+      dialog.focus();
+    });
+  });
+  document.querySelector("#add-diagram-tab")?.addEventListener("click", () => {
+    if (document.querySelector("#create-tab-dialog")) return;
+    const backdrop = document.createElement("div");
+    backdrop.className = "create-tab-backdrop";
+    backdrop.innerHTML = `<section id="create-tab-dialog" class="create-tab-dialog" role="dialog" aria-modal="true" aria-labelledby="create-tab-title" aria-describedby="create-tab-description" tabindex="-1">
+      <header><h2 id="create-tab-title">Create a new tab</h2><p id="create-tab-description">Choose the diagram name to use for this tab.</p></header>
+      <form id="create-tab-form">
+        <label for="create-tab-type">Diagram name</label>
+        <select id="create-tab-type" required>${diagramCatalog.map((diagram) => `<option value="${escapeHtml(diagram.value)}">${escapeHtml(diagram.label)}</option>`).join("")}</select>
+        <div class="create-tab-actions"><button id="cancel-create-tab" type="button">Cancel</button><button class="primary" type="submit">Create</button></div>
+      </form>
+    </section>`;
+    workspace.append(backdrop);
+    const close = () => backdrop.remove();
+    backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+    backdrop.querySelector("#cancel-create-tab").addEventListener("click", close);
+    backdrop.querySelector("#create-tab-dialog").addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } });
+    backdrop.querySelector("#create-tab-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submit = event.currentTarget.querySelector("button[type='submit']");
+      const selected = diagramCatalog.find((diagram) => diagram.value === event.currentTarget.querySelector("#create-tab-type").value);
+      const baseName = selected?.label ?? "Diagram";
+      const used = new Set(state.diagrams.map((diagram) => diagram.name));
+      let name = baseName;
+      let number = 2;
+      while (used.has(name)) name = `${baseName} ${number++}`;
+      submit.disabled = true;
+      try {
+        // The selection names the tab only; the canvas keeps the existing project diagram behavior.
+        const created = await api.request("/api/diagrams", { method: "POST", body: JSON.stringify({ project_id: state.project.id, type: state.diagram?.type ?? "uml-class", name }) });
+        state.diagrams.push(created);
+        activateDiagramTab(state, created);
+        close();
+        renderShell();
+        bus.emit("diagram:changed", created);
+      } catch (error) {
+        submit.disabled = false;
+        bus.emit("toast", error.message);
+      }
+    });
+    backdrop.querySelector("#create-tab-type").focus();
   });
   const notifyCanvasResize = () => document.querySelector("#diagram-canvas")?.dispatchEvent(new Event("canvas:resize"));
   const applySidebarLayout = ({ persist = true } = {}) => {
@@ -382,10 +507,39 @@ function renderShell() {
     try { await navigator.clipboard.writeText(url); bus.emit("toast", "Project link copied"); }
     catch { prompt("Copy project link", url); }
   });
-  document.querySelector("#manual-save")?.addEventListener("click", async () => {
-    await saveCurrentDiagram({ snapshot: true });
-    bus.emit("toast", "Diagram milestone saved");
-    if (state.sidebarLayout.right.open && state.rightPanel === "history") renderShell();
+  const openTabSelectionDialog = ({ title, description, tabs, confirmLabel, onConfirm }) => {
+    if (!tabs.length || document.querySelector("#tab-selection-dialog")) return;
+    const backdrop = document.createElement("div");
+    backdrop.className = "create-tab-backdrop";
+    backdrop.innerHTML = `<section id="tab-selection-dialog" class="create-tab-dialog" role="dialog" aria-modal="true" aria-labelledby="tab-selection-title" aria-describedby="tab-selection-description" tabindex="-1"><header><h2 id="tab-selection-title">${escapeHtml(title)}</h2><p id="tab-selection-description">${escapeHtml(description)}</p></header><form id="tab-selection-form"><fieldset class="tab-selection-list"><legend>Tabs</legend>${tabs.map((tab) => `<label><input type="checkbox" name="diagram" value="${escapeHtml(tab.id)}" ${tab.checked ? "checked" : ""}><span>${escapeHtml(tab.name)}</span></label>`).join("")}</fieldset><div class="create-tab-actions"><button class="cancel-tab-selection" type="button">Cancel</button><button class="primary" type="submit">${escapeHtml(confirmLabel)}</button></div></form></section>`;
+    workspace.append(backdrop);
+    const close = () => backdrop.remove();
+    backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+    backdrop.querySelector(".cancel-tab-selection").addEventListener("click", close);
+    backdrop.querySelector("#tab-selection-dialog").addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } });
+    backdrop.querySelector("#tab-selection-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const ids = [...event.currentTarget.querySelectorAll("input[name='diagram']:checked")].map((input) => input.value);
+      if (!ids.length) { bus.emit("toast", "Select at least one tab."); return; }
+      const submit = event.currentTarget.querySelector("button[type='submit']");
+      submit.disabled = true;
+      try { await onConfirm(ids); close(); }
+      catch (error) { submit.disabled = false; bus.emit("toast", error.message); }
+    });
+    backdrop.querySelector("input:checked, input").focus();
+  };
+  document.querySelector("#manual-save")?.addEventListener("click", () => {
+    openTabSelectionDialog({
+      title: "Save milestone",
+      description: "The current tab is selected. Choose any additional tabs to include in this milestone.",
+      tabs: state.diagrams.map((diagram) => ({ ...diagram, checked: diagram.id === state.diagram?.id })),
+      confirmLabel: "Save milestone",
+      onConfirm: async (ids) => {
+        await saveMilestone(ids);
+        bus.emit("toast", `Milestone saved for ${ids.length} tab${ids.length === 1 ? "" : "s"}`);
+        if (state.sidebarLayout.right.open && state.rightPanel === "history") renderShell();
+      }
+    });
   });
   document.querySelectorAll("[data-history-version]").forEach((button) => button.addEventListener("click", () => {
     state.selectedHistoryVersion = button.dataset.historyVersion === "current" ? "current" : Number(button.dataset.historyVersion);
@@ -410,24 +564,28 @@ function renderShell() {
   });
   document.querySelector("#restore-selected-version")?.addEventListener("click", async (event) => {
     const version = state.selectedHistoryVersion;
-    if (version === "current" || !confirm(`Restore project version ${version}? Current workspace changes will be replaced.`)) return;
-    event.currentTarget.disabled = true;
-    try {
-      const result = await api.request(`/api/projects/${state.project.id}/versions/${version}/restore`, { method: "POST" });
-      state.project = result.project;
-      state.diagrams = result.diagrams ?? [];
-      state.diagram = state.diagrams[0] ?? null;
-      resetEditorInteractionState(state);
-      state.selectedHistoryVersion = "current";
-      await loadVersionHistory();
-      renderShell();
-      bus.emit("bootstrap", { projects: [state.project], diagrams: state.diagrams });
-      if (state.diagram) bus.emit("diagram:changed", state.diagram);
-      bus.emit("toast", `Restored project version ${version}`);
-    } catch (error) {
-      event.currentTarget.disabled = false;
-      bus.emit("toast", error.message);
-    }
+    const milestone = state.versionHistory.find((item) => String(item.version) === String(version));
+    if (version === "current" || !milestone) return;
+    const available = (milestone.diagrams ?? []).filter((saved) => state.diagrams.some((diagram) => diagram.id === saved.id));
+    openTabSelectionDialog({
+      title: `Restore milestone ${version}`,
+      description: "Choose which tabs to restore. Tabs you do not select will remain unchanged.",
+      tabs: available.map((diagram) => ({ ...diagram, checked: diagram.id === state.diagram?.id || available.length === 1 })),
+      confirmLabel: "Restore selected",
+      onConfirm: async (ids) => {
+        for (const diagramId of ids) {
+          const restored = await api.restoreDiagram(state.project.id, version, { diagram_id: diagramId });
+          state.diagrams = state.diagrams.map((diagram) => diagram.id === restored.id ? restored : diagram);
+          if (state.diagram?.id === restored.id) state.diagram = restored;
+          delete state.tabStates[restored.id];
+          state.dirtyTabIds.delete(restored.id);
+        }
+        state.selectedHistoryVersion = "current";
+        renderShell();
+        if (state.diagram) bus.emit("diagram:changed", state.diagram);
+        bus.emit("toast", `Restored ${ids.length} tab${ids.length === 1 ? "" : "s"} from milestone ${version}`);
+      }
+    });
   });
   document.querySelector("#project-title.top-project-name")?.addEventListener("click", () => {
     const button = document.querySelector("#project-title.top-project-name");

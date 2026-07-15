@@ -163,13 +163,25 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   }
 
   function renderSignedOut() {
-    element.innerHTML = `<div class="auth-entry-actions"><button id="open-signup" class="primary" type="button">Sign Up</button><button id="open-login" type="button">Log In</button></div>
+    element.innerHTML = `<div class="auth-entry-actions"><button id="open-login" class="primary" type="button">Log In</button></div>
       ${modalOpen ? `<div class="auth-modal-backdrop" role="presentation"><section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-description" tabindex="-1">
         <button id="close-auth" class="auth-close" type="button" aria-label="Close authentication">×</button>
-        <header class="auth-modal-header"><span class="auth-modal-icon" aria-hidden="true">S</span><div><h2 id="auth-title">${titles[mode]}</h2><p id="auth-description">${escapeHtml(description())}</p></div></header>
-        <div class="auth-modal-body">${authForm()}${message ? `<p class="auth-message ${messageKind}" role="${messageKind === "error" ? "alert" : "status"}">${escapeHtml(message)}</p>` : ""}${devCode ? `<button id="use-dev-code" class="auth-dev-code" type="button">Use local development code ${devCode}</button>` : ""}</div>
+        <aside class="auth-brand-panel" aria-hidden="true">
+          <div class="auth-brand-mark"><span>S</span><strong>SysML Studio</strong></div>
+          <div class="auth-brand-copy"><span>Welcome</span><h3>Design systems.<br><strong>Shape the future.</strong></h3><p>Model, validate, and collaborate in one focused workspace.</p></div>
+          <div class="auth-brand-art" aria-label="Connected SysML system model">
+            <span class="auth-model-node auth-model-node-system">System</span>
+            <span class="auth-model-link auth-model-link-left"></span>
+            <span class="auth-model-link auth-model-link-right"></span>
+            <span class="auth-model-node auth-model-node-sensor">Sensor</span>
+            <span class="auth-model-node auth-model-node-control">Control</span>
+          </div>
+        </aside>
+        <main class="auth-form-panel">
+          <header class="auth-modal-header"><span class="auth-eyebrow">Secure workspace</span><h2 id="auth-title">${titles[mode]}</h2><p id="auth-description">${escapeHtml(description())}</p></header>
+          <div class="auth-modal-body">${authForm()}${message ? `<p class="auth-message ${messageKind}" role="${messageKind === "error" ? "alert" : "status"}">${escapeHtml(message)}</p>` : ""}${devCode ? `<button id="use-dev-code" class="auth-dev-code" type="button">Use local development code ${devCode}</button>` : ""}</div>
+        </main>
       </section></div>` : ""}`;
-    element.querySelector("#open-signup").addEventListener("click", () => { mode = "signup"; modalOpen = true; message = ""; render(); });
     element.querySelector("#open-login").addEventListener("click", () => { mode = "login"; modalOpen = true; message = ""; render(); });
     element.querySelector("#close-auth")?.addEventListener("click", () => { modalOpen = false; message = ""; render(); });
     element.querySelector(".auth-modal-backdrop")?.addEventListener("click", (event) => { if (event.target === event.currentTarget) { modalOpen = false; message = ""; render(); } });

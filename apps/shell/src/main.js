@@ -1,5 +1,5 @@
 import { createEventBus, mountMfe } from "/packages/ui/src/moduleRegistry.js";
-import { createInitialState, resetEditorInteractionState } from "./app/state.js";
+import { activateDiagramTab, createInitialState, resetEditorInteractionState } from "./app/state.js";
 import { applyTheme, dashboardUrl, escapeHtml, projectUrl, rememberPage as persistPage } from "./app/browser.js";
 import { createApiClient } from "./api/apiClient.js";
 import { createSynchronizationService } from "./services/synchronizationService.js";
@@ -18,7 +18,7 @@ const storageSet = (key, value) => { try { localStorage.setItem(key, value); } c
 const storageRemove = (key) => { try { localStorage.removeItem(key); } catch { /* Nothing else to clear locally. */ } };
 
 const bus = createEventBus();
-let autoSaveTimer = null;
+const autoSaveTimers = new Map();
 applyTheme(state.settings.theme);
 
 // Dismiss sharing without re-rendering it, so an unsent email/role draft remains intact.
@@ -60,6 +60,8 @@ const synchronization = createSynchronizationService({ api, state, bus });
 function setDiagram(diagram, recordHistory = true, historySnapshot = null) {
   if (state.diagram && recordHistory) state.history.push(structuredClone(historySnapshot ?? state.diagram));
   state.diagram = diagram;
+  state.diagrams = state.diagrams.map((item) => item.id === diagram.id ? diagram : item);
+  state.dirtyTabIds.add(diagram.id);
   state.selectedHistoryVersion = "current";
   state.future = [];
   bus.emit("diagram:changed", diagram);
@@ -70,6 +72,8 @@ function setDiagram(diagram, recordHistory = true, historySnapshot = null) {
 // The final blur commit supplies the pre-edit snapshot and creates one undo entry.
 function updateDiagramDraft(diagram) {
   state.diagram = diagram;
+  state.diagrams = state.diagrams.map((item) => item.id === diagram.id ? diagram : item);
+  state.dirtyTabIds.add(diagram.id);
   state.selectedHistoryVersion = "current";
   state.future = [];
   scheduleAutoSave();
@@ -82,23 +86,9 @@ function updateSaveStatus(status) {
 }
 
 function syncSavedDiagram(saved) {
-  state.diagram = saved;
-  const changedElements = new Map((saved.elements ?? []).map((item) => [item.model_element_id ?? item.id, item]));
-  const changedRelationships = new Map((saved.relationships ?? []).map((item) => [item.model_relationship_id ?? item.id, item]));
-  state.diagrams = (state.diagrams ?? []).map((diagram) => {
-    if (diagram.id === saved.id) return saved;
-    return {
-      ...diagram,
-      elements: (diagram.elements ?? []).map((item) => {
-        const model = changedElements.get(item.model_element_id ?? item.id);
-        return model ? { ...item, kind: model.kind, name: model.name, properties: structuredClone(model.properties), stereotypes: structuredClone(model.stereotypes ?? []) } : item;
-      }),
-      relationships: (diagram.relationships ?? []).map((item) => {
-        const model = changedRelationships.get(item.model_relationship_id ?? item.id);
-        return model ? { ...item, kind: model.kind, source_id: model.source_id, target_id: model.target_id, label: model.label, properties: structuredClone(model.properties), stereotypes: structuredClone(model.stereotypes ?? []), validation: model.validation } : item;
-      })
-    };
-  });
+  if (state.diagram?.id === saved.id) state.diagram = saved;
+  state.dirtyTabIds.delete(saved.id);
+  state.diagrams = (state.diagrams ?? []).map((diagram) => diagram.id === saved.id ? saved : diagram);
   state.modelRepository.elements = [...new Map([...state.modelRepository.elements, ...(saved.elements ?? []).map((item) => ({ id: item.model_element_id ?? item.id, kind: item.kind, name: item.name, semantic: item.properties, stereotypes: item.stereotypes ?? [] }))].map((item) => [item.id, item])).values()];
 }
 
@@ -118,21 +108,25 @@ function repositoryFromDiagrams(diagrams) {
 
 function scheduleAutoSave() {
   if (state.view !== "editor" || !state.diagram?.id) return;
-  clearTimeout(autoSaveTimer);
+  state.dirtyTabIds.add(state.diagram.id);
+  state.diagrams = state.diagrams.map((item) => item.id === state.diagram.id ? state.diagram : item);
+  clearTimeout(autoSaveTimers.get(state.diagram.id));
   updateSaveStatus("Unsaved");
-  autoSaveTimer = setTimeout(() => saveCurrentDiagram({ snapshot: false }), 300);
+  const pendingDiagram = structuredClone(state.diagram);
+  autoSaveTimers.set(state.diagram.id, setTimeout(() => saveCurrentDiagram({ snapshot: false, diagram: pendingDiagram }), 300));
 }
 
-async function saveCurrentDiagram({ snapshot = false } = {}) {
-  if (!state.diagram?.id) return;
-  clearTimeout(autoSaveTimer);
+async function saveCurrentDiagram({ snapshot = false, diagram = state.diagram } = {}) {
+  if (!diagram?.id) return;
+  clearTimeout(autoSaveTimers.get(diagram.id));
+  autoSaveTimers.delete(diagram.id);
   try {
-    updateSaveStatus(snapshot ? "Saving…" : "Auto-saving…");
-    const saved = await api.saveDiagram(state.diagram, { snapshot });
+    if (state.diagram?.id === diagram.id) updateSaveStatus(snapshot ? "Saving…" : "Auto-saving…");
+    const saved = await api.saveDiagram(diagram, { snapshot });
     syncSavedDiagram(saved);
     await loadModelRepository(state.project?.id);
     bus.emit("repository:changed", state.modelRepository);
-    updateSaveStatus(snapshot ? "Saved milestone" : "Saved");
+    if (state.diagram?.id === diagram.id) updateSaveStatus(snapshot ? "Saved milestone" : "Saved");
     if (snapshot) await loadVersionHistory();
     setTimeout(() => {
       if (state.saveStatus === "Saved" || state.saveStatus === "Saved milestone") updateSaveStatus("");
@@ -141,6 +135,20 @@ async function saveCurrentDiagram({ snapshot = false } = {}) {
     updateSaveStatus("Save failed");
     bus.emit("toast", error.message);
   }
+}
+
+async function saveMilestone(diagramIds) {
+  const selected = state.diagrams.filter((diagram) => diagramIds.includes(diagram.id));
+  if (!selected.length) throw new Error("Select at least one tab for the milestone.");
+  updateSaveStatus("Saving milestone…");
+  for (const diagram of selected) {
+    clearTimeout(autoSaveTimers.get(diagram.id));
+    autoSaveTimers.delete(diagram.id);
+    syncSavedDiagram(await api.saveDiagram(diagram));
+  }
+  const result = await api.request(`/api/projects/${state.project.id}/versions/milestone`, { method: "POST", body: JSON.stringify({ diagram_ids: selected.map(({ id }) => id), description: selected.map(({ name }) => name).join(", ") }) });
+  state.versionHistory = result.versions ?? [];
+  updateSaveStatus("Saved milestone");
 }
 
 async function loadVersionHistory() {
@@ -204,7 +212,7 @@ function redoDiagram() {
 
 const renderShell = createShellRenderer({
   api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
-  redoDiagram, saveCurrentDiagram, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
+  activateDiagramTab, cancelAutoSave: (diagramId) => { clearTimeout(autoSaveTimers.get(diagramId)); autoSaveTimers.delete(diagramId); }, redoDiagram, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 });
 
 async function loadWorkspace() {

@@ -25,7 +25,7 @@ function svgNode(node) {
   const style = { ...defaults, ...(node.style ?? {}) };
   const { x, y, width: w, height: h } = node; const cx = x + w / 2; const cy = y + h / 2;
   const stroke = `fill="${style.fillColor}" stroke="${style.borderColor}" stroke-width="${style.borderWidth}"`;
-  const centeredName = (baseline = cy + 5) => multiline(cx, baseline, node.name, style.textSize * 1.3, 'text-anchor="middle" font-weight="700"');
+  const centeredName = (baseline = cy + 5, weight = 700) => multiline(cx, baseline, node.name, style.textSize * 1.3, `text-anchor="middle" font-weight="${weight}"`);
   let shape = ""; let content = "";
   if (node.kind === "actor") {
     const scale = Math.min(w / 100, Math.max(0.45, (h - 24) / 126));
@@ -46,7 +46,7 @@ function svgNode(node) {
   } else if (packageKinds.has(node.kind)) {
     shape = `<path d="M${x} ${y + 14} H${x + w * .42} L${x + w * .5} ${y + 28} H${x + w} V${y + h} H${x} Z" ${stroke}/>`; content = `${centeredName(cy)}${lineText(cx, cy + 18, `«${nodeLabel(node.kind)}»`, 'text-anchor="middle" font-size="10"')}`;
   } else if (node.kind === "text-label" || node.kind.startsWith("symbol-")) {
-    content = centeredName();
+    content = centeredName(cy + 5, String(style.textStyle).includes("bold") ? 700 : 400);
   } else {
     const radius = node.kind === "component" ? 2 : 3;
     shape = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}" ${stroke}/>`;
@@ -141,9 +141,12 @@ export function toVectorPdf(diagram) {
   }
   for (const node of diagram.elements ?? []) {
     const style = { ...defaults, ...(node.style ?? {}) }; const textSize = style.textSize * scale; const textColor = color(style.textColor);
-    commands.push(`${color(style.fillColor)} rg ${color(style.borderColor)} RG ${style.borderWidth * scale} w ${tx(node.x)} ${ty(node.y + node.height)} ${node.width * scale} ${node.height * scale} re B`, `BT /F2 ${textSize} Tf ${textColor} rg ${tx(node.x + 8)} ${ty(node.y + 20)} Td (${pdfText(node.name)}) Tj ET`);
+    const textOnly = node.kind === "text-label";
+    const titleFont = String(style.textStyle).includes("bold") ? "F2" : "F1";
+    if (!textOnly) commands.push(`${color(style.fillColor)} rg ${color(style.borderColor)} RG ${style.borderWidth * scale} w ${tx(node.x)} ${ty(node.y + node.height)} ${node.width * scale} ${node.height * scale} re B`);
+    commands.push(`BT /${titleFont} ${textSize} Tf ${textColor} rg ${tx(node.x + 8)} ${ty(node.y + 20)} Td (${pdfText(node.name)}) Tj ET`);
     const stereotype = node.kind === "requirement" ? "<<requirement>>" : `<<${nodeLabel(node.kind)}>>`;
-    commands.push(`BT /F1 ${10 * scale} Tf ${textColor} rg ${tx(node.x + 8)} ${ty(node.y + 36)} Td (${pdfText(stereotype)}) Tj ET`);
+    if (!textOnly) commands.push(`BT /F1 ${10 * scale} Tf ${textColor} rg ${tx(node.x + 8)} ${ty(node.y + 36)} Td (${pdfText(stereotype)}) Tj ET`);
     const sections = compartmentDefinitionsFor(node).map(({ key, label }) => ({ label, value: node.properties?.[key] })).filter(({ value }) => Array.isArray(value) ? value.length : String(value ?? "").length);
     if (node.kind === "requirement") sections.unshift({ label: "text", value: node.properties?.text ?? "" }, { label: "id", value: node.properties?.requirementId ?? node.id });
     let offset = 54;

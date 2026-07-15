@@ -33,6 +33,10 @@ const humanKinds = new Set(["actor"]);
 const timelineKinds = new Set(["lifeline", "activation", "message", "time-constraint", "duration-constraint", "state-invariant"]);
 const packageKinds = new Set(["package", "model", "profile", "view", "viewpoint"]);
 const noteKinds = new Set(["note", "comment", "rationale", "problem"]);
+const textElements = [
+  ["H1", 32, "bold"], ["H2", 28, "bold"], ["H3", 24, "bold"], ["H4", 20, "bold"],
+  ["H5", 18, "bold"], ["H6", 16, "bold"], ["Paragraph", 13, "normal"]
+].map(([label, textSize, textStyle]) => ({ type: "node", kind: "text-label", label, textPreset: { textSize, textStyle } }));
 
 function labelFor(kind) {
   return elementLabels[kind] ?? kind.split("-").map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ");
@@ -102,11 +106,13 @@ registerMfe("element-palette", (element, { state, bus }) => {
     const diagramNodes = diagramType.palette.filter((item) => item.type === "node");
     element.innerHTML = `<div class="panel palette-panel">
       <h2>Elements</h2>
+      <details open><summary><span>Text</span><span class="palette-count">${textElements.length}</span></summary>${paletteItems(textElements)}</details>
       <details open><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
       <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>
     </div>`;
     element.querySelectorAll("[data-kind]").forEach((button) => {
-      const item = [...commonNodes, ...diagramNodes].find(({ kind, type, variant }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant);
+      const candidates = [...textElements, ...commonNodes, ...diagramNodes];
+      const item = candidates.find(({ kind, type, variant, label }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant && (!candidates.some((candidate) => candidate.kind === kind && candidate.type === type && candidate.label !== label) || label === button.title));
       const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, preview: elementPreview(item.shape ?? item.kind, item.variant), clientY });
       button.addEventListener("mouseenter", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
       button.addEventListener("mousemove", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
