@@ -105,6 +105,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let shortcutHelpOpen = false;
   let printPreviewOpen = false;
   let collaboration = state.collaboration ?? { presence: [], comments: [] };
+  let aiPreview = null;
   let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
@@ -255,6 +256,50 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       }).join("")}
       ${connectDrag ? `<path class="relationship-preview" d="${routeToPath([connectDrag.start, { x: connectDrag.x2, y: connectDrag.start.y }, { x: connectDrag.x2, y: connectDrag.y2 }])}" marker-end="url(#open-arrow)"></path>` : ""}
     </svg>`;
+  }
+
+  function renderAiGhosts(diagram) {
+    const previewOperations = aiPreview?.operations ?? [];
+    if (!previewOperations.length) return "";
+    const ghostElements = previewOperations.flatMap((item) => {
+      if (item.element) return [{ ...item.element, aiPreviewKind: "addition" }];
+      const current = item.element_id ? diagram.elements.find((node) => node.id === item.element_id) : null;
+      if (!current) return [];
+      if (item.kind === "updateElement") return [{ ...current, ...item.changes, properties: { ...(current.properties ?? {}), ...(item.changes?.properties ?? {}) }, id: `preview_${current.id}`, aiPreviewKind: "update" }];
+      if (item.kind === "removeElement") return [{ ...current, id: `preview_${current.id}`, aiPreviewKind: "removal" }];
+      return [];
+    });
+    const ghostRelationships = previewOperations.flatMap((item) => {
+      if (item.relationship) return [{ ...item.relationship, aiPreviewKind: "addition" }];
+      if (item.relationship_id) {
+        const current = diagram.relationships.find((relationship) => relationship.id === item.relationship_id);
+        return current ? [{ ...current, aiPreviewKind: "removal" }] : [];
+      }
+      return [];
+    });
+    const allElements = [...diagram.elements, ...ghostElements];
+    const lines = ghostRelationships.map((relationship) => {
+      const source = allElements.find((item) => item.id === relationship.source_id);
+      const target = allElements.find((item) => item.id === relationship.target_id);
+      if (!source || !target) return "";
+      const x1 = source.x + source.width / 2; const y1 = source.y + source.height / 2;
+      const x2 = target.x + target.width / 2; const y2 = target.y + target.height / 2;
+      return `<path class="ai-ghost-relationship ${relationship.aiPreviewKind === "removal" ? "removal" : ""}" d="M ${x1} ${y1} L ${x2} ${y2}" marker-end="url(#open-arrow)"></path><text class="ai-ghost-label ${relationship.aiPreviewKind === "removal" ? "removal" : ""}" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}">${relationship.aiPreviewKind === "removal" ? "Remove: " : ""}${escapeHtml(relationship.label || relationship.kind)}</text>`;
+    }).join("");
+    const nodes = ghostElements.map((node) => {
+      const style = nodeStyle(node);
+      runtimeStyles.set(`ai-ghost-${node.id}`, `.ai-ghost-node[data-ai-ghost="${runtimeStyles.escape(node.id)}"]`, { left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px`, "--node-fill": style.fillColor, "--node-border": style.borderColor, "--node-text-color": style.textColor });
+      return `<div class="diagram-node ai-ghost-node ai-ghost-${node.aiPreviewKind} ${nodeKindClass(node.kind)}" data-ai-ghost="${node.id}" aria-label="Proposed ${escapeHtml(node.kind)} ${escapeHtml(node.name)}">${renderNodeContent(node)}${renderModelPorts(node)}<span class="ai-ghost-badge">${node.aiPreviewKind === "removal" ? "AI remove" : node.aiPreviewKind === "update" ? "AI update" : "AI addition"}</span></div>`;
+    }).join("");
+    return `<svg class="ai-ghost-relationship-layer" width="${CANVAS.width}" height="${CANVAS.height}" aria-hidden="true">${lines}</svg>${nodes}`;
+  }
+
+  function renderModelPorts(node) {
+    return (node.properties?.ports ?? []).map((port, index) => {
+      const side = port.side === "right" ? "right" : "left";
+      runtimeStyles.set(`port-${node.id}-${port.id ?? index}`, `.model-port[data-model-port="${runtimeStyles.escape(`${node.id}:${port.id ?? index}`)}"]`, { left: `${Number(port.x ?? (side === "right" ? node.width : 0))}px`, top: `${Number(port.y ?? ((index + 1) * node.height) / ((node.properties?.ports?.length ?? 0) + 1))}px` });
+      return `<span class="model-port model-port-${side}" data-model-port="${node.id}:${port.id ?? index}" title="${escapeHtml(port.name)} · ${escapeHtml(port.direction ?? "inout")}${port.type ? ` · ${escapeHtml(port.type)}` : ""}"><span>${escapeHtml(port.name)}</span></span>`;
+    }).join("");
   }
 
   function toolbarPosition(diagram, surfaceWidth = 650, surfaceHeight = 48) {
@@ -505,6 +550,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}">
       <div id="canvas-plane">
         ${renderRelationships(diagram)}
+        ${renderAiGhosts(diagram)}
         ${renderGuides()}
         ${renderCollaborationOverlay(diagram)}
         ${selectionBox ? `<div class="group-selection-box" data-selection-area title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>` : ""}
@@ -512,7 +558,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
           runtimeStyles.set(`node-${node.id}`, `.diagram-node[data-node="${runtimeStyles.escape(node.id)}"]`, { left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px`, "--node-fill": style.fillColor, "--node-border": style.borderColor, "--node-border-width": `${style.borderWidth}px`, "--node-text-color": style.textColor, "--node-text-size": `${style.textSize}px`, "--node-font-weight": style.textStyle.includes("bold") ? 700 : 400, "--node-font-style": style.textStyle.includes("italic") ? "italic" : "normal" });
           return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text">
-            ${renderNodeContent(node)}
+            ${renderNodeContent(node)}${renderModelPorts(node)}
             ${selected ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
           </div>`;
@@ -1373,6 +1419,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (relationship) setSelection([], relationship.id);
   }));
   subscriptions.push(bus.on("collaboration:changed", (next) => { collaboration = next ?? { presence: [], comments: [] }; render(); }));
+  subscriptions.push(bus.on("ai:preview", (next) => { aiPreview = next; scheduleRender(); }));
   render();
   element.scrollLeft = state.canvasViewport?.scrollLeft ?? 0;
   element.scrollTop = state.canvasViewport?.scrollTop ?? 0;

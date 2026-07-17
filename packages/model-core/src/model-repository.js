@@ -4,10 +4,10 @@ import { createUnitRegistry, validateQuantityCompatibility } from "./units-syste
 
 const semanticKeys = {
   package: ["memberIds", "importedPackageIds"],
-  interface: ["operations", "receptions", "properties", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
-  "interface-block": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
-  "interface-definition": ["interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
-  block: ["attributes", "parts", "references", "values", "operations", "responsibilities", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"],
+  interface: ["operations", "receptions", "properties", "ports", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  "interface-block": ["attributes", "operations", "ports", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  "interface-definition": ["attributes", "operations", "ports", "interfaceId", "interfaceKind", "signals", "commands", "protocols", "pins", "connector", "pinAssignments", "voltage", "current", "frequency", "bandwidth", "units", "compatibleWith"],
+  block: ["attributes", "parts", "references", "values", "operations", "ports", "responsibilities", "constraints", "quantity", "unit", "quantityKind", "min", "max", "default"],
   requirement: ["requirementId", "text", "parentRequirementId", "owner", "verificationMethod", "verificationStatus", "approvalStatus", "risk", "priority", "baseline"],
   port: ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],
   "proxy-port": ["direction", "interfaceId", "interfaceType", "multiplicity", "conjugated", "signals", "commands", "protocols", "pins", "voltage", "current", "frequency", "bandwidth", "units"],

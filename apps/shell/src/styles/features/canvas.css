@@ -134,6 +134,20 @@
   .marker-fill { fill: context-stroke; }
 }
 .relationship-line.selected { filter: drop-shadow(0 0 4px var(--warning)); }
+.ai-ghost-relationship-layer { position: absolute; inset: 0; z-index: 1; overflow: visible; pointer-events: none; }
+.ai-ghost-relationship { fill: none; stroke: var(--accent-2); stroke-width: 2px; stroke-dasharray: 9 7; opacity: .7; }
+.ai-ghost-label { fill: var(--accent-2); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
+.ai-ghost-relationship.removal { stroke: var(--danger); }
+.ai-ghost-label.removal { fill: var(--danger); }
+.diagram-node.ai-ghost-node { z-index: 1; opacity: .58; pointer-events: none; filter: saturate(.8); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2), transparent 55%), 0 12px 30px var(--shadow-color); }
+.diagram-node.ai-ghost-node::before { border-style: dashed; }
+.diagram-node.ai-ghost-removal { --node-border: var(--danger) !important; opacity: .42; filter: grayscale(.6); }
+.diagram-node.ai-ghost-update { --node-border: var(--warning) !important; }
+.ai-ghost-badge { position: absolute; top: -22px; right: 0; padding: 2px 6px; border: 1px solid var(--accent-2); border-radius: 999px; background: var(--panel); color: var(--accent-2); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.model-port { position: absolute; z-index: 5; width: 11px; height: 11px; border: 2px solid var(--node-border, var(--accent-2)); background: var(--canvas); transform: translate(-50%, -50%); pointer-events: none; }
+.model-port > span { position: absolute; top: 50%; width: max-content; max-width: 92px; overflow: hidden; color: var(--node-text-color, var(--ink)); font-size: 9px; font-weight: 700; text-overflow: ellipsis; transform: translateY(-50%); white-space: nowrap; }
+.model-port-left > span { left: 14px; }
+.model-port-right > span { right: 14px; }
 .relationship-label { fill: var(--relationship-label); font-size: 12px; text-anchor: middle; pointer-events: all; cursor: pointer; }
 .relationship-label.selected { fill: var(--warning); font-weight: 700; }
 .relationship-preview { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 8 6; pointer-events: none; }

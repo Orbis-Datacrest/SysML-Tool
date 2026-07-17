@@ -266,6 +266,29 @@ export function migrateSchema(db) {
       active INTEGER NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ai_proposals (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      diagram_id TEXT NOT NULL,
+      base_diagram_version INTEGER NOT NULL,
+      task TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT,
+      proposal TEXT NOT NULL,
+      materialized_patch TEXT NOT NULL,
+      validation TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      applied_at TEXT,
+      applied_operation_ids TEXT NOT NULL DEFAULT '[]',
+      context_hash TEXT NOT NULL,
+      latency_ms INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS ai_proposals_scope_idx ON ai_proposals(tenant_id, project_id, diagram_id, created_at);
     CREATE TABLE IF NOT EXISTS email_outbox (
       id TEXT PRIMARY KEY,
       recipient TEXT NOT NULL,
@@ -282,4 +305,94 @@ export function migrateSchema(db) {
       updated_at TEXT NOT NULL
     );
   `);
+
+  // CREATE TABLE IF NOT EXISTS does not evolve an existing SQLite table. Keep
+  // this additive upgrade idempotent so databases created by earlier AI
+  // proposal implementations can be opened without being deleted or reset.
+  const proposalColumns = new Map(db.prepare("PRAGMA table_info(ai_proposals)").all().map((column) => [column.name, column]));
+  const requiredProposalColumns = [
+    ["prompt", "TEXT NOT NULL DEFAULT ''"],
+    ["proposal", "TEXT NOT NULL DEFAULT '{}'"],
+    ["materialized_patch", "TEXT NOT NULL DEFAULT '{\"summary\":\"Legacy proposal\",\"base_element_ids\":[],\"operations\":[]}'"],
+    ["applied_at", "TEXT"],
+    ["applied_operation_ids", "TEXT NOT NULL DEFAULT '[]'"]
+  ];
+  for (const [name, definition] of requiredProposalColumns) {
+    if (!proposalColumns.has(name)) db.exec(`ALTER TABLE ai_proposals ADD COLUMN ${name} ${definition}`);
+  }
+
+  const evolvedProposalColumns = new Set(db.prepare("PRAGMA table_info(ai_proposals)").all().map((column) => column.name));
+  if (evolvedProposalColumns.has("prompt_version") || evolvedProposalColumns.has("accepted_operation_ids") || evolvedProposalColumns.has("summary")) {
+    rebuildLegacyAiProposals(db);
+  } else {
+    // Older rows contain a different proposal contract and must never become
+    // applicable merely because compatibility columns were added.
+    db.prepare("UPDATE ai_proposals SET status = 'expired' WHERE proposal = '{}' AND status = 'pending'").run();
+  }
+}
+
+function parseJson(value, fallback) {
+  try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
+}
+
+function rebuildLegacyAiProposals(db) {
+  const rows = db.prepare("SELECT * FROM ai_proposals").all();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      DROP INDEX IF EXISTS ai_proposals_scope_idx;
+      ALTER TABLE ai_proposals RENAME TO ai_proposals_legacy_migration;
+      CREATE TABLE ai_proposals (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        diagram_id TEXT NOT NULL,
+        base_diagram_version INTEGER NOT NULL,
+        task TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT,
+        proposal TEXT NOT NULL,
+        materialized_patch TEXT NOT NULL,
+        validation TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        applied_at TEXT,
+        applied_operation_ids TEXT NOT NULL DEFAULT '[]',
+        context_hash TEXT NOT NULL,
+        latency_ms INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX ai_proposals_scope_idx ON ai_proposals(tenant_id, project_id, diagram_id, created_at);
+    `);
+    const insert = db.prepare(`
+      INSERT INTO ai_proposals (id, tenant_id, project_id, diagram_id, base_diagram_version, task, prompt, provider, model, proposal, materialized_patch, validation, status, created_by, created_at, expires_at, applied_at, applied_operation_ids, context_hash, latency_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const row of rows) {
+      const existingProposal = parseJson(row.proposal, {});
+      const proposal = Object.keys(existingProposal).length ? existingProposal : {
+        summary: row.summary || "Legacy AI proposal",
+        assumptions: parseJson(row.assumptions, []),
+        clarification_questions: [],
+        comments: parseJson(row.comments, []),
+        operations: parseJson(row.operations, []),
+        layout_suggestions: []
+      };
+      const patch = parseJson(row.materialized_patch, { summary: proposal.summary, base_element_ids: [], operations: [] });
+      const status = row.status === "pending" ? "expired" : row.status;
+      insert.run(
+        row.id, row.tenant_id, row.project_id, row.diagram_id, row.base_diagram_version, row.task,
+        row.prompt ?? "", row.provider, row.model ?? null, JSON.stringify(proposal), JSON.stringify(patch),
+        typeof row.validation === "string" ? row.validation : JSON.stringify(row.validation ?? {}), status,
+        row.created_by, row.created_at, row.expires_at, row.applied_at ?? null,
+        row.applied_operation_ids ?? row.accepted_operation_ids ?? "[]", row.context_hash, Number(row.latency_ms ?? 0)
+      );
+    }
+    db.exec("DROP TABLE ai_proposals_legacy_migration; COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }

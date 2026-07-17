@@ -57,7 +57,7 @@ function rememberPage(view, projectId = state.project?.id) {
 const api = createApiClient({ state, bus });
 const synchronization = createSynchronizationService({ api, state, bus });
 
-function setDiagram(diagram, recordHistory = true, historySnapshot = null) {
+function setDiagram(diagram, recordHistory = true, historySnapshot = null, scheduleSave = true) {
   if (state.diagram && recordHistory) state.history.push(structuredClone(historySnapshot ?? state.diagram));
   state.diagram = diagram;
   state.diagrams = state.diagrams.map((item) => item.id === diagram.id ? diagram : item);
@@ -65,7 +65,7 @@ function setDiagram(diagram, recordHistory = true, historySnapshot = null) {
   state.selectedHistoryVersion = "current";
   state.future = [];
   bus.emit("diagram:changed", diagram);
-  scheduleAutoSave();
+  if (scheduleSave) scheduleAutoSave();
 }
 
 // Text editors update their draft without forcing the canvas subtree to rerender.
@@ -131,9 +131,11 @@ async function saveCurrentDiagram({ snapshot = false, diagram = state.diagram } 
     setTimeout(() => {
       if (state.saveStatus === "Saved" || state.saveStatus === "Saved milestone") updateSaveStatus("");
     }, 1800);
+    return saved;
   } catch (error) {
     updateSaveStatus("Save failed");
     bus.emit("toast", error.message);
+    return null;
   }
 }
 

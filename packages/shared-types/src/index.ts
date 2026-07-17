@@ -263,3 +263,24 @@ export interface AiAdvisorRequest {
   prompt: string;
   attachments: Array<{ id: string; name: string; mime_type: string; storage_key: string }>;
 }
+
+export type AiSemanticOperation =
+  | { id: string; type: "add_element"; rationale: string; element: { ref: string; kind: string; name: string; variant?: "full" | "simple"; properties: Record<string, unknown>; stereotypes: string[] } }
+  | { id: string; type: "update_element"; rationale: string; target_id: string; changes: { name?: string; variant?: "full" | "simple"; properties?: Record<string, unknown>; stereotypes?: string[] } }
+  | { id: string; type: "remove_element"; rationale: string; target_id: string }
+  | { id: string; type: "add_relationship"; rationale: string; relationship: { ref: string; kind: string; source_ref: string; target_ref: string; label: string; properties: Record<string, unknown>; stereotypes: string[] } }
+  | { id: string; type: "remove_relationship"; rationale: string; relationship_id: string };
+
+export interface AiDiagramProposal {
+  id: string;
+  diagram_id: string;
+  base_diagram_version: number;
+  task: "generate" | "review";
+  status: "pending" | "applied" | "rejected" | "expired";
+  summary: string;
+  assumptions: string[];
+  clarification_questions: string[];
+  comments: Array<{ id: string; anchor_type: "diagram" | "element"; anchor_id: string; severity: "info" | "warning" | "error"; message: string; suggestion: string }>;
+  operations: AiSemanticOperation[];
+  layout_suggestions: Array<{ id: string; strategy: "flow" | "hierarchical" | "grid" | "radial"; element_refs: string[]; rationale: string }>;
+}

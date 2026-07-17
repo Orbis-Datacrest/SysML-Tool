@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hashPassword, isValidEmail, normalizeEmail, tenantIdForEmail, validatePassword, verifyPassword } from "../src/auth/security.js";
+import { decryptSecret, encryptSecret, hashPassword, isValidEmail, normalizeEmail, tenantIdForEmail, validatePassword, verifyPassword } from "../src/auth/security.js";
 
 test("authentication primitives normalize and validate credentials", () => {
   assert.equal(normalizeEmail("  Engineer@Example.COM "), "engineer@example.com");
@@ -8,6 +8,15 @@ test("authentication primitives normalize and validate credentials", () => {
   assert.equal(validatePassword("short"), "Password must be at least 6 characters.");
   assert.match(validatePassword("long-enough"), /uppercase, lowercase, and numeric/);
   assert.equal(validatePassword("Long-enough1"), "");
+});
+
+test("tenant API keys round-trip through authenticated encryption", () => {
+  const encrypted = encryptSecret("sk-example-secret-value");
+  assert.notEqual(encrypted, "sk-example-secret-value");
+  assert.equal(decryptSecret(encrypted), "sk-example-secret-value");
+  const parts = encrypted.split(".");
+  parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
+  assert.throws(() => decryptSecret(parts.join(".")), /could not be decrypted|invalid/);
 });
 
 test("password hashes verify safely and tenant identifiers are deterministic", () => {

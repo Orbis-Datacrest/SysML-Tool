@@ -3,19 +3,42 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { applyPatch, assertBaselineMutable, compareProjectVersions, createBaseline, createId, decomposeDiagram, hydrateDiagram, restoreDiagram, restoreElement, validateDiagram, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
+import { applyPatch, assertBaselineMutable, compareProjectVersions, createBaseline, createId, decomposeDiagram, diagramTypes, hydrateDiagram, restoreDiagram, restoreElement, validateDiagram, validateModel, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import { toVectorPdf } from "../../../apps/import-export/src/exporters.js";
 import { accessTokenDays, authMaxAttempts, authWindowMs, dataDir, dbPath, port, refreshTokenDays, root } from "./config.js";
-import { addDays, encryptSecret, hashPassword, isValidEmail, makeToken, makeVerificationCode, normalizeEmail, now, tenantIdForEmail, validatePassword, verifyPassword } from "./auth/security.js";
+import { addDays, decryptSecret, encryptSecret, hashPassword, isValidEmail, makeToken, makeVerificationCode, normalizeEmail, now, tenantIdForEmail, validatePassword, verifyPassword } from "./auth/security.js";
 import { readJsonBody as body, sendJson as send } from "./http/responses.js";
 import { serveStaticFile } from "./http/staticFiles.js";
 import { migrateSchema } from "./database/migrateSchema.js";
 import { createAuthRouter } from "./routes/createAuthRouter.js";
+import { createHash } from "node:crypto";
+import { buildAiContext } from "../../ai-advisor-service/src/contextBuilder.js";
+import { materializeSemanticProposal, selectMaterializedOperations, validateProposalReferences } from "../../ai-advisor-service/src/layoutEngine.js";
+import { isAiDiagramSupported, validateAiProposal } from "../../ai-advisor-service/src/proposalContract.js";
+import { AiProviderRegistry, createOllamaProvider, createOpenAiProvider, localProvider, providerInstructions } from "../../ai-advisor-service/src/providerRegistry.js";
 
 await mkdir(dataDir, { recursive: true });
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
+
+const aiProviders = new AiProviderRegistry().register("local", localProvider).register("ollama", createOllamaProvider({
+  endpoint: process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
+  model: process.env.OLLAMA_MODEL ?? "qwen2.5:7b"
+}));
+
+function activeAiKey(tenantId) {
+  return db.prepare("SELECT * FROM ai_keys WHERE tenant_id = ? AND active = 1 ORDER BY created_at DESC LIMIT 1").get(tenantId);
+}
+
+function configuredAiProvider(tenantId) {
+  const key = activeAiKey(tenantId);
+  if (key?.provider === "openai") {
+    return { name: "openai", model: key.model || "gpt-4o-mini", provider: createOpenAiProvider({ apiKey: decryptSecret(key.encrypted_api_key), model: key.model || "gpt-4o-mini" }) };
+  }
+  const name = ["local", "ollama"].includes(process.env.DEFAULT_AI_PROVIDER) ? process.env.DEFAULT_AI_PROVIDER : "local";
+  return { name, model: name === "ollama" ? (process.env.OLLAMA_MODEL ?? "qwen2.5:7b") : "structured-local-parser", provider: aiProviders.providers.get(name) };
+}
 
 async function readJson(name, fallback) {
   const file = path.join(dataDir, `${name}.json`);
@@ -668,27 +691,68 @@ function recordEvent(diagram, patch, actor = "local-user", reason = "diagram upd
   `).run(createId("event"), diagram.tenant_id, diagram.project_id, diagram.id, diagram.version, actor, reason, now(), JSON.stringify(patch ?? {}));
 }
 
-function makeAiPatch(diagram, prompt) {
-  const lower = prompt.toLowerCase();
-  const baseX = 120 + diagram.elements.length * 42;
-  const baseY = 280 + diagram.elements.length * 18;
-  if (lower.includes("requirement")) {
-    return {
-      summary: "Add a SysML-style requirement note and trace relationship for review.",
-      operations: [
-        { op: "addElement", element: { id: createId("req"), kind: "requirement", name: "Derived Requirement", x: baseX, y: baseY, width: 210, height: 120, properties: { text: prompt } } }
-      ]
-    };
+function projectRepository(tenantId, projectId) {
+  const elements = db.prepare("SELECT * FROM model_elements WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map((item) => ({ ...item, semantic: json(item.semantic, {}), stereotypes: json(item.stereotypes, []) }));
+  const relationships = db.prepare("SELECT * FROM model_relationships WHERE project_id = ? AND tenant_id = ? ORDER BY created_at").all(projectId, tenantId).map((item) => ({ ...item, semantic: json(item.semantic, {}), stereotypes: json(item.stereotypes, []) }));
+  return { elements, relationships };
+}
+
+function publicAiProposal(row) {
+  const proposal = json(row.proposal, {});
+  const patch = json(row.materialized_patch, {});
+  const previewOperations = patch.operations.map((operation) => ({
+    operation_id: operation.semantic_operation_id,
+    kind: operation.op,
+    ...(operation.op === "addElement" ? { element: operation.element } : {}),
+    ...(operation.op === "updateElement" ? { element_id: operation.element_id, changes: operation.changes } : {}),
+    ...(operation.op === "removeElement" ? { element_id: operation.element_id } : {}),
+    ...(operation.op === "addRelationship" ? { relationship: operation.relationship } : {}),
+    ...(operation.op === "removeRelationship" ? { relationship_id: operation.relationship_id } : {})
+  }));
+  return {
+    id: row.id,
+    diagram_id: row.diagram_id,
+    base_diagram_version: row.base_diagram_version,
+    task: row.task,
+    status: row.status,
+    provider: row.provider,
+    model: row.model,
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+    summary: proposal.summary,
+    assumptions: proposal.assumptions,
+    clarification_questions: proposal.clarification_questions,
+    comments: proposal.comments,
+    operations: proposal.operations,
+    layout_suggestions: proposal.layout_suggestions,
+    validation: json(row.validation, {}),
+    preview_operations: previewOperations
+  };
+}
+
+function assertBodyKeys(input, allowed) {
+  const extra = Object.keys(input ?? {}).find((key) => !allowed.includes(key));
+  if (extra) {
+    const error = new Error(`Unsupported request field: ${extra}`);
+    error.statusCode = 400;
+    throw error;
   }
-  const newClassId = createId("class");
-  const firstClass = diagram.elements.find((element) => element.kind === "class" || element.kind === "block");
-  const operations = [
-    { op: "addElement", element: { id: newClassId, kind: "class", name: "AIRecommendedComponent", x: baseX, y: baseY, width: 210, height: 112, properties: { attributes: ["status"], operations: ["validate()"] } } }
+}
+
+function deterministicDiagramValidation(diagram) {
+  const structural = validateDiagram(diagram);
+  const model = decomposeDiagram(diagram);
+  const diagnostics = validateModel({ elements: model.elements, relationships: model.relationships }, { diagramElementIds: new Set(model.elements.map((item) => item.id)) });
+  return { valid: structural.valid && !diagnostics.some((item) => item.severity === "error"), errors: structural.errors, diagnostics };
+}
+
+function introducedValidationErrors(before, after) {
+  const key = (item) => `${item.code}:${item.affectedElement?.id}:${item.message}`;
+  const existing = new Set((before.diagnostics ?? []).filter((item) => item.severity === "error").map(key));
+  return [
+    ...(after.errors ?? []).filter((message) => !(before.errors ?? []).includes(message)),
+    ...(after.diagnostics ?? []).filter((item) => item.severity === "error" && !existing.has(key(item))).map((item) => item.message)
   ];
-  if (firstClass) {
-    operations.push({ op: "addRelationship", relationship: { id: createId("rel"), kind: "dependency", source_id: firstClass.id, target_id: newClassId, label: "uses", properties: { proposed_by: "ai" } } });
-  }
-  return { summary: "Add a recommended component and dependency based on the current canvas context.", operations };
 }
 
 function bootstrap(tenantId) {
@@ -1131,35 +1195,155 @@ async function api(req, res, urlOrPath) {
     return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(candidate.id, tenantId)));
   }
 
+  if (pathname === "/api/ai/config" && req.method === "GET") {
+    const key = activeAiKey(tenantId);
+    const provider = key?.provider === "openai" ? "openai" : (["local", "ollama"].includes(process.env.DEFAULT_AI_PROVIDER) ? process.env.DEFAULT_AI_PROVIDER : "local");
+    const model = provider === "openai" ? key.model : provider === "ollama" ? (process.env.OLLAMA_MODEL ?? "qwen2.5:7b") : "structured-local-parser";
+    return send(res, 200, { provider, model, supported_diagram_types: diagramTypes });
+  }
+
   if (pathname === "/api/ai/preview" && req.method === "POST") {
     const input = await body(req);
-    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(input.diagram_id, tenantId));
+    assertBodyKeys(input, ["project_id", "diagram_id", "selected_element_ids", "prompt", "task"]);
+    const task = input.task === "review" ? "review" : "generate";
+    const context = requireProjectPermission(req, res, input.project_id, task === "review" ? "review" : "edit");
+    if (!context) return;
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND project_id = ? AND tenant_id = ?").get(input.diagram_id, context.project.id, tenantId));
     if (!diagram) return send(res, 404, { error: "Diagram not found" });
-    const patch = makeAiPatch(diagram, input.prompt ?? "");
-    const preview = applyPatch(diagram, patch);
-    const validation = validateDiagram(preview);
-    return send(res, validation.valid ? 200 : 422, { patch, validation, preview });
+    if (!isAiDiagramSupported(diagram.type)) return send(res, 422, { error: `The active diagram type is unsupported: ${diagram.type}` });
+    const prompt = String(input.prompt ?? "").trim();
+    if (task === "generate" && !prompt) return send(res, 422, { error: "Describe the diagram you want to generate." });
+    if (prompt.length > 6000) return send(res, 413, { error: "The AI request is too long." });
+    const deterministicValidation = deterministicDiagramValidation(diagram);
+    const aiContext = buildAiContext({ task, prompt, diagram, selectedElementIds: Array.isArray(input.selected_element_ids) ? input.selected_element_ids.slice(0, 100) : [], repository: projectRepository(tenantId, context.project.id), validation: deterministicValidation });
+    let providerConfig;
+    try { providerConfig = configuredAiProvider(tenantId); }
+    catch (error) { return send(res, 500, { error: error.message }); }
+    const startedAt = Date.now();
+    let rawProposal;
+    try {
+      rawProposal = await aiProviders.proposeWith(providerConfig.provider, { context: aiContext, instructions: providerInstructions });
+    } catch (error) {
+      return send(res, 502, { error: error.message });
+    }
+    let proposal;
+    try {
+      proposal = validateAiProposal(rawProposal, diagram.type);
+      validateProposalReferences(diagram, proposal);
+    } catch (error) {
+      return send(res, 422, { error: `AI returned an invalid proposal: ${error.message}` });
+    }
+    const materializedPatch = materializeSemanticProposal(diagram, proposal, createId);
+    const candidate = applyPatch(diagram, materializedPatch);
+    const validation = deterministicDiagramValidation(candidate);
+    const introducedErrors = introducedValidationErrors(deterministicValidation, validation);
+    if (introducedErrors.length) return send(res, 422, { error: "The proposed model introduced deterministic validation errors.", validation, introduced_errors: introducedErrors });
+    const proposalId = createId("ai_proposal");
+    const createdAt = now();
+    const expiresAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+    const contextHash = createHash("sha256").update(JSON.stringify(aiContext)).digest("hex");
+    db.prepare(`
+      INSERT INTO ai_proposals (id, tenant_id, project_id, diagram_id, base_diagram_version, task, prompt, provider, model, proposal, materialized_patch, validation, status, created_by, created_at, expires_at, context_hash, latency_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    `).run(proposalId, tenantId, context.project.id, diagram.id, diagram.version, task, prompt, providerConfig.name, providerConfig.model, JSON.stringify(proposal), JSON.stringify(materializedPatch), JSON.stringify(validation), user.id, createdAt, expiresAt, contextHash, Date.now() - startedAt);
+    recordAudit({ tenantId, projectId: context.project.id, actorId: user.id, action: `ai.${task}.proposed`, resourceType: "ai-proposal", resourceId: proposalId, description: proposal.summary, metadata: { diagram_id: diagram.id, base_diagram_version: diagram.version, provider: providerConfig.name, operation_count: proposal.operations.length, context_hash: contextHash } });
+    return send(res, 201, publicAiProposal(db.prepare("SELECT * FROM ai_proposals WHERE id = ?").get(proposalId)));
   }
 
   if (pathname === "/api/ai/apply" && req.method === "POST") {
     const input = await body(req);
-    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(input.diagram_id, tenantId));
+    assertBodyKeys(input, ["proposal_id", "selected_operation_ids", "approved"]);
+    if (input.approved !== true) return send(res, 422, { error: "Explicit approval is required before applying an AI proposal." });
+    const row = db.prepare("SELECT * FROM ai_proposals WHERE id = ? AND tenant_id = ?").get(input.proposal_id, tenantId);
+    if (!row) return send(res, 404, { error: "AI proposal not found" });
+    const context = requireProjectPermission(req, res, row.project_id, "edit");
+    if (!context) return;
+    if (row.created_by !== user.id && !context.permissions.includes("admin")) return send(res, 403, { error: "Only the proposal creator or a project administrator may apply it." });
+    if (row.status !== "pending") return send(res, 409, { error: `This AI proposal is already ${row.status}.` });
+    if (new Date(row.expires_at) <= new Date()) {
+      db.prepare("UPDATE ai_proposals SET status = 'expired' WHERE id = ?").run(row.id);
+      return send(res, 410, { error: "This AI proposal expired. Generate a new preview." });
+    }
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND project_id = ? AND tenant_id = ?").get(row.diagram_id, row.project_id, tenantId));
     if (!diagram) return send(res, 404, { error: "Diagram not found" });
-    const next = applyPatch(diagram, input.patch);
-    const validation = validateDiagram(next);
-    if (!validation.valid) return send(res, 422, validation);
-    updateDiagram(next);
-    recordEvent(next, input.patch, "ai-advisor", input.patch.summary);
-    db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), next.project_id, tenantId);
-    return send(res, 200, diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(next.id, tenantId)));
+    if (diagram.version !== row.base_diagram_version) return send(res, 409, { error: "The diagram changed after this proposal was created. Generate a new preview." });
+    const selectedIds = Array.isArray(input.selected_operation_ids) ? [...new Set(input.selected_operation_ids.map(String))] : [];
+    const proposal = json(row.proposal, {});
+    const allowedIds = new Set((proposal.operations ?? []).map((item) => item.id));
+    if (!selectedIds.length || selectedIds.some((id) => !allowedIds.has(id))) return send(res, 422, { error: "Choose one or more valid proposal operations." });
+    const storedPatch = json(row.materialized_patch, {});
+    let operations;
+    try { operations = selectMaterializedOperations(storedPatch, selectedIds); }
+    catch (error) { return send(res, 422, { error: error.message }); }
+    const patch = { summary: proposal.summary, operations };
+    const next = applyPatch(diagram, patch);
+    const validation = deterministicDiagramValidation(next);
+    const currentValidation = deterministicDiagramValidation(diagram);
+    const introducedErrors = introducedValidationErrors(currentValidation, validation);
+    if (introducedErrors.length) return send(res, 422, { error: "The selected proposal operations introduced deterministic validation errors.", validation, introduced_errors: introducedErrors });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      updateDiagram(next);
+      recordEvent(next, patch, user.id, `AI proposal: ${proposal.summary}`);
+      db.prepare("UPDATE projects SET updated_at = ? WHERE id = ? AND tenant_id = ?").run(now(), next.project_id, tenantId);
+      db.prepare("UPDATE ai_proposals SET status = 'applied', applied_at = ?, applied_operation_ids = ? WHERE id = ? AND status = 'pending'").run(now(), JSON.stringify(selectedIds), row.id);
+      recordAudit({ tenantId, projectId: row.project_id, actorId: user.id, action: "ai.proposal.applied", resourceType: "ai-proposal", resourceId: row.id, description: proposal.summary, metadata: { diagram_id: diagram.id, from_version: diagram.version, to_version: next.version, accepted_operation_ids: selectedIds, rejected_operation_ids: [...allowedIds].filter((id) => !selectedIds.includes(id)) } });
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return send(res, 200, { diagram: diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(next.id, tenantId)), proposal: publicAiProposal(db.prepare("SELECT * FROM ai_proposals WHERE id = ?").get(row.id)) });
+  }
+
+  const aiProposalMatch = pathname.match(/^\/api\/ai\/proposals\/([^/]+)$/);
+  if (aiProposalMatch && req.method === "DELETE") {
+    const row = db.prepare("SELECT * FROM ai_proposals WHERE id = ? AND tenant_id = ?").get(aiProposalMatch[1], tenantId);
+    if (!row) return send(res, 404, { error: "AI proposal not found" });
+    const context = requireProjectPermission(req, res, row.project_id, "read");
+    if (!context) return;
+    if (row.created_by !== user.id && !context.permissions.includes("admin")) return send(res, 403, { error: "Only the proposal creator or a project administrator may reject it." });
+    if (row.status === "pending") db.prepare("UPDATE ai_proposals SET status = 'rejected' WHERE id = ?").run(row.id);
+    recordAudit({ tenantId, projectId: row.project_id, actorId: user.id, action: "ai.proposal.rejected", resourceType: "ai-proposal", resourceId: row.id, description: "Rejected AI proposal", metadata: { diagram_id: row.diagram_id } });
+    return send(res, 200, { ok: true });
+  }
+
+  if (pathname === "/api/ai/keys" && req.method === "GET") {
+    if (!permissionsForRole(user.role).includes("admin")) return send(res, 403, { error: "Tenant administrator permission is required." });
+    const keys = db.prepare("SELECT id, provider, model, display_name, active, created_at FROM ai_keys WHERE tenant_id = ? ORDER BY created_at DESC").all(tenantId).map((item) => ({ ...item, active: Boolean(item.active) }));
+    const active = keys.find((item) => item.active);
+    return send(res, 200, { provider: active?.provider ?? "local", model: active?.model ?? "structured-local-parser", keys });
   }
 
   if (pathname === "/api/ai/keys" && req.method === "POST") {
+    if (!permissionsForRole(user.role).includes("admin")) return send(res, 403, { error: "Tenant administrator permission is required." });
     const input = await body(req);
-    const item = { id: createId("key"), tenant_id: tenantId, provider: input.provider, model: input.model, display_name: input.display_name, encrypted_api_key: encryptSecret(input.api_key), active: Boolean(input.active), created_at: now() };
-    db.prepare("INSERT INTO ai_keys (id, tenant_id, provider, model, display_name, encrypted_api_key, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(item.id, item.tenant_id, item.provider, item.model, item.display_name, item.encrypted_api_key, item.active ? 1 : 0, item.created_at);
+    assertBodyKeys(input, ["provider", "model", "display_name", "api_key", "active"]);
+    if (input.provider !== "openai") return send(res, 422, { error: "Only OpenAI API keys are accepted here. Local AI does not require a key." });
+    const apiKey = String(input.api_key ?? "").trim();
+    const model = String(input.model ?? "").trim();
+    const displayName = String(input.display_name ?? "").trim();
+    if (apiKey.length < 20) return send(res, 422, { error: "Enter a valid OpenAI API key." });
+    if (!model || model.length > 100 || !/^[A-Za-z0-9._:-]+$/.test(model)) return send(res, 422, { error: "Enter a valid OpenAI model name." });
+    if (!displayName || displayName.length > 80) return send(res, 422, { error: "Enter a display name of 80 characters or fewer." });
+    const item = { id: createId("key"), tenant_id: tenantId, provider: "openai", model, display_name: displayName, encrypted_api_key: encryptSecret(apiKey), active: true, created_at: now() };
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE ai_keys SET active = 0 WHERE tenant_id = ?").run(tenantId);
+      db.prepare("INSERT INTO ai_keys (id, tenant_id, provider, model, display_name, encrypted_api_key, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)").run(item.id, item.tenant_id, item.provider, item.model, item.display_name, item.encrypted_api_key, item.created_at);
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
     const { encrypted_api_key, ...safe } = item;
     return send(res, 201, safe);
+  }
+
+  if (pathname === "/api/ai/provider" && req.method === "POST") {
+    if (!permissionsForRole(user.role).includes("admin")) return send(res, 403, { error: "Tenant administrator permission is required." });
+    const input = await body(req);
+    assertBodyKeys(input, ["provider"]);
+    if (input.provider !== "local") return send(res, 422, { error: "Save an OpenAI API key to select OpenAI." });
+    db.prepare("UPDATE ai_keys SET active = 0 WHERE tenant_id = ?").run(tenantId);
+    return send(res, 200, { provider: "local", model: "structured-local-parser" });
   }
 
   const exportMatch = pathname.match(/^\/api\/diagrams\/([^/]+)\/export\/pdf$/);
@@ -1184,8 +1368,8 @@ http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/api/")) return await api(req, res, url);
     return await serveStaticFile({ root, res, pathname: url.pathname });
   } catch (error) {
-    console.error(error);
-    send(res, 500, { error: error.message });
+    if ((error.statusCode ?? 500) >= 500) console.error(error);
+    send(res, error.statusCode ?? 500, { error: error.message });
   }
 }).listen(port, () => {
   console.log(`SysML/UML modeling tool running at http://localhost:${port}`);

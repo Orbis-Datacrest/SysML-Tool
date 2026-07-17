@@ -111,7 +111,7 @@ function renderShell() {
       state.sidebarLayout.right.open ? state.sidebarLayout.right.width : SIDEBAR_CONSTRAINTS.collapsedWidth
     );
   }
-  const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft };
+  const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft, saveCurrentDiagram };
   const moduleCleanups = [];
   const mount = (name, target) => {
     const cleanup = mountMfe(name, target, context);
