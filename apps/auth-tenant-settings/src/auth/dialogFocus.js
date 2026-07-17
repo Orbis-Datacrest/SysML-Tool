@@ -26,3 +26,10 @@ export function trapTabKey(event, dialog, activeElement = document.activeElement
     (event.shiftKey ? last : first).focus();
   }
 }
+
+export function keepFocusInDialog(event, dialog) {
+  if (dialog.contains(event.target)) return;
+  event.stopPropagation?.();
+  const focusTarget = dialog.querySelector(DIALOG_FOCUSABLE_SELECTOR) ?? dialog;
+  focusTarget.focus();
+}

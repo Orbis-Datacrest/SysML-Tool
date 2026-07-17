@@ -1,6 +1,6 @@
 import { createEventBus, mountMfe } from "/packages/ui/src/moduleRegistry.js";
 import { activateDiagramTab, createInitialState, resetEditorInteractionState } from "./app/state.js";
-import { applyTheme, dashboardUrl, escapeHtml, projectUrl, rememberPage as persistPage } from "./app/browser.js";
+import { applyTheme, dashboardUrl, escapeHtml, nextTheme, projectUrl, rememberPage as persistPage } from "./app/browser.js";
 import { createApiClient } from "./api/apiClient.js";
 import { createSynchronizationService } from "./services/synchronizationService.js";
 import { createShellRenderer } from "./views/createShellRenderer.js";
@@ -50,8 +50,8 @@ const icons = {
   ai: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-stars" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.73 1.73 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.73 1.73 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.73 1.73 0 0 0 3.407 2.31zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.16 1.16 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.16 1.16 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732z"/></svg>`
 };
 
-function rememberPage(view, projectId = state.project?.id) {
-  persistPage(view, projectId);
+function rememberPage(view, projectId = state.project?.id, diagramId = state.diagram?.id) {
+  persistPage(view, projectId, diagramId);
 }
 
 const api = createApiClient({ state, bus });
@@ -213,7 +213,7 @@ function redoDiagram() {
 }
 
 const renderShell = createShellRenderer({
-  api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
+  api, applyTheme, bus, escapeHtml, icons, loadVersionHistory, mountMfe, nextTheme, projectUrl, rememberPage,
   activateDiagramTab, cancelAutoSave: (diagramId) => { clearTimeout(autoSaveTimers.get(diagramId)); autoSaveTimers.delete(diagramId); }, redoDiagram, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 });
 
@@ -234,7 +234,8 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   const data = await api.request(`/api/projects/${projectId}/open`, { method: "POST" });
   state.project = data.project;
   state.diagrams = data.diagrams ?? [];
-  state.diagram = state.diagrams[0] ?? null;
+  const rememberedDiagramId = storageGet(`sysml.activeDiagramId.${projectId}`);
+  state.diagram = state.diagrams.find((diagram) => diagram.id === rememberedDiagramId) ?? state.diagrams[0] ?? null;
   state.modelRepository = repositoryFromDiagrams(state.diagrams);
   resetEditorInteractionState(state);
   state.selectedHistoryVersion = "current";
@@ -252,6 +253,31 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   } catch (error) {
     console.warn("Using the diagram-derived model repository because model loading failed", error);
   }
+}
+
+async function enterAuthenticatedWorkspace(preferredProjectId = storageGet("sysml.activeProjectId")) {
+  if (preferredProjectId) {
+    try {
+      await openProject(preferredProjectId, { updateHistory: false });
+      window.history.replaceState({ view: "editor", projectId: preferredProjectId }, "", projectUrl(preferredProjectId));
+      return true;
+    } catch (error) {
+      if (!state.user) throw error;
+      storageRemove("sysml.activeProjectId");
+    }
+  }
+  const data = await api.request("/api/bootstrap");
+  const firstProjectId = data.projects?.[0]?.id;
+  if (firstProjectId) {
+    await openProject(firstProjectId, { updateHistory: false });
+    window.history.replaceState({ view: "editor", projectId: firstProjectId }, "", projectUrl(firstProjectId));
+    return true;
+  }
+  state.view = "dashboard";
+  rememberPage("dashboard");
+  renderShell();
+  window.history.replaceState({ view: "dashboard" }, "", dashboardUrl());
+  return false;
 }
 
 async function boot() {
@@ -288,10 +314,9 @@ async function boot() {
   const routeProjectId = new URL(window.location.href).searchParams.get("project");
   const rememberedView = routeProjectId ? "editor" : storageGet("sysml.activeView");
   const rememberedProjectId = routeProjectId ?? storageGet("sysml.activeProjectId");
-  if (state.user && rememberedView === "editor" && rememberedProjectId) {
+  if (state.user && rememberedView === "editor") {
     try {
-      await openProject(rememberedProjectId, { updateHistory: false });
-      window.history.replaceState({ view: "editor", projectId: rememberedProjectId }, "", projectUrl(rememberedProjectId));
+      await enterAuthenticatedWorkspace(rememberedProjectId);
       return;
     } catch {
       storageRemove("sysml.activeProjectId");
@@ -317,6 +342,30 @@ bus.on("auth:login", async ({ token, refreshToken, user }) => {
   rememberPage("dashboard");
   bus.emit("auth:changed", user);
   renderShell();
+  window.history.replaceState({ view: "dashboard" }, "", dashboardUrl());
+});
+
+bus.on("auth:expired", () => {
+  if (!state.user && !state.authToken && !state.refreshToken) return;
+  synchronization.stop();
+  state.authToken = "";
+  state.refreshToken = "";
+  state.user = null;
+  state.tenantId = "tenant_demo";
+  storageRemove("sysml.authToken");
+  storageRemove("sysml.refreshToken");
+  storageRemove("sysml.activeProjectId");
+  state.view = "dashboard";
+  state.project = null;
+  state.diagram = null;
+  state.diagrams = [];
+  state.modelRepository = { schema_version: 2, elements: [], relationships: [] };
+  resetEditorInteractionState(state);
+  rememberPage("dashboard");
+  bus.emit("auth:changed", null);
+  renderShell();
+  window.history.replaceState({ view: "dashboard" }, "", dashboardUrl());
+  bus.emit("toast", "Your session expired. Please log in again.");
 });
 
 bus.on("auth:logout", async () => {

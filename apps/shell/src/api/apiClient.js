@@ -10,21 +10,30 @@ export function createApiClient({ state, bus, fetchImpl = fetch }) {
       return api.rawRequest(path, options, true);
     },
     async rawRequest(path, options = {}, allowRefresh = true) {
+      const hadAuthenticatedSession = Boolean(state.authToken || state.user);
       const authHeaders = state.authToken ? { authorization: `Bearer ${state.authToken}` } : {};
       const result = await fetchImpl(path, {
         ...options,
         headers: { "content-type": "application/json", "x-tenant-id": state.tenantId, ...authHeaders, ...(options.headers ?? {}) }
       });
       if (result.status === 401 && allowRefresh && state.refreshToken && path !== "/api/auth/refresh") {
-        const refreshed = await api.rawRequest("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) }, false);
-        state.authToken = refreshed.token;
-        state.refreshToken = refreshed.refreshToken;
-        state.user = refreshed.user;
-        persistSession(refreshed.token, refreshed.refreshToken);
-        bus.emit("auth:changed", state.user);
-        return api.rawRequest(path, options, false);
+        try {
+          const refreshed = await api.rawRequest("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken: state.refreshToken }) }, false);
+          state.authToken = refreshed.token;
+          state.refreshToken = refreshed.refreshToken;
+          state.user = refreshed.user;
+          persistSession(refreshed.token, refreshed.refreshToken);
+          bus.emit("auth:changed", state.user);
+          return api.rawRequest(path, options, false);
+        } catch (error) {
+          if (hadAuthenticatedSession) bus.emit("auth:expired");
+          throw error;
+        }
       }
-      if (!result.ok) throw new Error((await result.json()).error ?? result.statusText);
+      if (!result.ok) {
+        if (result.status === 401 && hadAuthenticatedSession && !path.startsWith("/api/auth/")) bus.emit("auth:expired");
+        throw new Error((await result.json()).error ?? result.statusText);
+      }
       return result.headers.get("content-type")?.includes("application/json") ? result.json() : result.blob();
     },
     saveDiagram: (diagram, { snapshot = false } = {}) => api.request(`/api/diagrams/${diagram.id}${snapshot ? "?snapshot=1" : ""}`, { method: "PUT", body: JSON.stringify(diagram) }),

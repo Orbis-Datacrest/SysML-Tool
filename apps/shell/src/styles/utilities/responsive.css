@@ -21,7 +21,7 @@
   .topbar-left, .topbar-actions { gap: 4px; }
   .topbar .icon-button, .mobile-only.icon-button { width: 44px; height: 44px; }
   .brand-mark { gap: 0; }
-  .brand-mark > :not(.brand-icon) { display: none; }
+  .brand-mark > .brand-label { display: none; }
   .brand-icon { width: 32px; height: 32px; }
   .save-status, .project-name-edit, .share-button span:not(.share-lock), .share-chevron { display: none !important; }
   .topbar .export-button { min-width: 44px; width: 44px; height: 44px; padding: 0; font-size: 0; }

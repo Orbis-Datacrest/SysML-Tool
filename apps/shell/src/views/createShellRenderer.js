@@ -4,8 +4,8 @@ import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js"
 import { diagramCatalog } from "../../../../packages/model-core/src/diagram-catalog.js";
 
 export function createShellRenderer({
-  activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, projectUrl,
-  redoDiagram, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
+  activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, nextTheme, projectUrl,
+  redoDiagram, rememberPage, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 }) {
 let cleanupSidebarInteractions = () => {};
 let cleanupMountedModules = () => {};
@@ -21,16 +21,18 @@ function renderShell() {
   cleanupSidebarInteractions = () => {};
   cleanupMountedModules = () => {};
   applyTheme(state.settings.theme);
+  const isLanding = state.view === "dashboard" && !state.user;
   document.querySelector("#app").innerHTML = `
-    <header class="topbar">
+    <header class="topbar ${isLanding ? "landing-topbar" : ""}">
       <div class="topbar-left">
-        <button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span>SysML Studio</strong></button>
+        ${isLanding ? `<div class="landing-brand" aria-label="SysML Studio"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></div>` : `<button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></button>`}
         ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">${icons.save}</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
-        ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : `<span id="project-title">Project Dashboard</span>`}
+        ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : isLanding ? "" : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
+        ${isLanding ? `<nav class="landing-nav" aria-label="Landing page"><a href="#capabilities">Capabilities</a><a href="#workflow">Workflow</a><a href="#about">About</a></nav>` : ""}
         ${state.view === "editor" ? `<button id="ai-sidebar-toggle" class="icon-button ${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "active" : ""}" title="${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "Close" : "Open"} AI advisor" aria-label="${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "Close" : "Open"} AI advisor" aria-controls="right-sidebar-content" aria-expanded="${state.sidebarLayout.right.open && state.rightPanel === "advisor"}">${icons.ai}</button><button id="history-toggle" class="icon-button ${state.sidebarLayout.right.open && state.rightPanel === "history" ? "active" : ""}" title="${state.sidebarLayout.right.open && state.rightPanel === "history" ? "Close" : "Open"} History" aria-label="${state.sidebarLayout.right.open && state.rightPanel === "history" ? "Close" : "Open"} History" aria-controls="right-sidebar-content" aria-expanded="${state.sidebarLayout.right.open && state.rightPanel === "history"}">${icons.history}</button>` : ""}
-        <button id="theme-toggle" class="icon-button" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
+        <button id="theme-toggle" class="icon-button" type="button" data-theme="${state.settings.theme}" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-pressed="${state.settings.theme === "light"}">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
         ${state.view === "editor" ? `<div class="share-control">
           <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing" aria-haspopup="dialog" aria-expanded="false"><span class="share-lock" aria-hidden="true">${icons.share}</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
           <div id="share-popover" class="share-popover" role="dialog" aria-modal="false" aria-labelledby="share-popover-title" hidden>
@@ -88,10 +90,38 @@ function renderShell() {
         </aside>
         <button class="workspace-drawer-backdrop" aria-label="Close open panel"></button>
       </main>
-    ` : `
-      <main class="dashboard-host">
-        <section id="project-dashboard"></section>
+    ` : isLanding ? `
+      <main class="landing-page">
+        <section class="landing-hero" aria-labelledby="landing-title">
+          <div class="landing-orbit landing-orbit-one" aria-hidden="true"></div><div class="landing-orbit landing-orbit-two" aria-hidden="true"></div>
+          <div class="landing-copy">
+            <p class="landing-eyebrow"><span></span> Browser-based systems engineering</p>
+            <h1 id="landing-title">Turn complex systems into <em>clear decisions.</em></h1>
+            <p class="landing-lead">Model architecture, connect requirements, and validate your design in one collaborative SysML workspace built for focused engineering teams.</p>
+            <div class="landing-cta"><button class="landing-primary" data-auth-mode="signup" type="button">Start modeling <span aria-hidden="true">→</span></button><button class="landing-secondary" data-auth-mode="login" type="button">Open your workspace</button></div>
+            <div class="landing-proof" aria-label="Product benefits"><span><strong>01</strong> Visual modeling</span><span><strong>02</strong> Live validation</span><span><strong>03</strong> Team ready</span></div>
+          </div>
+          <div class="landing-visual" aria-label="Example connected system model">
+            <div class="model-window">
+              <div class="model-window-bar"><span></span><span></span><span></span><strong>Vehicle Architecture</strong><small>Validated</small></div>
+              <div class="model-canvas">
+                <div class="model-grid" aria-hidden="true"></div>
+                <article class="model-card model-main"><small>«system»</small><strong>Electric Vehicle</strong><span>Architecture overview</span></article>
+                <article class="model-card model-power"><small>«subsystem»</small><strong>Powertrain</strong><span>4 components</span></article>
+                <article class="model-card model-control"><small>«subsystem»</small><strong>Control Unit</strong><span>12 requirements</span></article>
+                <article class="model-card model-sensor"><small>«block»</small><strong>Sensor Array</strong><span>8 interfaces</span></article>
+                <svg class="model-links" viewBox="0 0 600 410" aria-hidden="true"><path d="M300 129V178H157V231 M300 178H443V231 M300 178V306"/><circle cx="300" cy="178" r="5"/></svg>
+                <div class="model-status"><span>✓</span><div><strong>Model health</strong><small>No critical issues</small></div><b>98%</b></div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="capabilities" class="landing-features" aria-label="Core capabilities"><article><span>◇</span><div><strong>Architect visually</strong><p>Build connected SysML and UML diagrams without losing the underlying model.</p></div></article><article><span>⌁</span><div><strong>Validate continuously</strong><p>Catch incomplete relationships and design conflicts as the model evolves.</p></div></article><article><span>◎</span><div><strong>Collaborate with context</strong><p>Share decisions, history, and engineering intent in one secure workspace.</p></div></article></section>
+        <section id="workflow" class="landing-statement"><p>One source of truth</p><h2>From first concept to validated architecture.</h2></section>
+        <section id="about" class="landing-about"><span>SysML Studio</span><p>Purpose-built for teams designing the systems that shape tomorrow.</p></section>
       </main>
+    ` : `
+      <main class="dashboard-host"><section id="project-dashboard"></section></main>
     `}
   `;
   // Sidebar widths are live application state, so apply them after rendering instead of embedding presentation in the markup.
@@ -114,13 +144,14 @@ function renderShell() {
   const context = { state, bus, api, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft, saveCurrentDiagram };
   const moduleCleanups = [];
   const mount = (name, target) => {
+    if (!target) return;
     const cleanup = mountMfe(name, target, context);
     if (typeof cleanup === "function") moduleCleanups.push(cleanup);
   };
-  if (state.view === "dashboard") mount("auth-session", document.querySelector("#auth-session"));
   if (state.view === "dashboard") {
-    mount("project-dashboard", document.querySelector("#project-dashboard"));
-  } else {
+    mount("auth-session", document.querySelector("#auth-session"));
+    if (state.user) mount("project-dashboard", document.querySelector("#project-dashboard"));
+  } else if (state.view === "editor") {
     mount("project-explorer", document.querySelector("#project-explorer"));
     mount("element-palette", document.querySelector("#element-palette"));
     mount("project-validation", document.querySelector("#project-validation"));
@@ -143,9 +174,11 @@ function renderShell() {
   document.querySelector("#brand-home")?.addEventListener("click", () => {
     if (state.view === "editor") showDashboard();
   });
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => button.addEventListener("click", () => bus.emit("auth:open", button.dataset.authMode)));
   const switchTab = (diagram) => {
     if (!diagram || diagram.id === state.diagram?.id) return;
     activateDiagramTab(state, diagram);
+    rememberPage("editor", state.project?.id, diagram.id);
     state.saveStatus = state.dirtyTabIds.has(diagram.id) ? "Unsaved" : "";
     renderShell();
     bus.emit("diagram:changed", diagram);
@@ -196,7 +229,10 @@ function renderShell() {
           const index = state.diagrams.findIndex((item) => item.id === diagram.id);
           state.diagrams = state.diagrams.filter((item) => item.id !== diagram.id);
           delete state.tabStates[diagram.id]; state.dirtyTabIds.delete(diagram.id);
-          if (state.diagram?.id === diagram.id) activateDiagramTab(state, state.diagrams[Math.min(index, state.diagrams.length - 1)]);
+          if (state.diagram?.id === diagram.id) {
+            activateDiagramTab(state, state.diagrams[Math.min(index, state.diagrams.length - 1)]);
+            rememberPage("editor", state.project?.id, state.diagram?.id);
+          }
           renderShell();
           bus.emit("diagram:changed", state.diagram);
         } catch (error) {
@@ -251,6 +287,7 @@ function renderShell() {
         const created = await api.request("/api/diagrams", { method: "POST", body: JSON.stringify({ project_id: state.project.id, type: state.diagram?.type ?? "uml-class", name }) });
         state.diagrams.push(created);
         activateDiagramTab(state, created);
+        rememberPage("editor", state.project?.id, created.id);
         close();
         renderShell();
         bus.emit("diagram:changed", created);
@@ -431,15 +468,17 @@ function renderShell() {
     applySidebarLayout();
   });
   document.querySelector("#theme-toggle")?.addEventListener("click", async () => {
-    const requestedTheme = state.settings.theme === "dark" ? "light" : "dark";
+    const requestedTheme = nextTheme(state.settings.theme);
     const requestVersion = ++themeRequestVersion;
     state.settings.theme = requestedTheme;
     applyTheme(requestedTheme);
     const toggle = document.querySelector("#theme-toggle");
     if (toggle) {
       toggle.innerHTML = requestedTheme === "dark" ? icons.moon : icons.sun;
+      toggle.dataset.theme = requestedTheme;
       toggle.title = `Toggle ${requestedTheme === "dark" ? "Light" : "Dark"} Mode`;
       toggle.setAttribute("aria-label", toggle.title);
+      toggle.setAttribute("aria-pressed", String(requestedTheme === "light"));
     }
     bus.emit("theme:changed", requestedTheme);
     if (state.user) {

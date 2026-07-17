@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { trapTabKey } from "../src/auth/dialogFocus.js";
+import { keepFocusInDialog, trapTabKey } from "../src/auth/dialogFocus.js";
 
 function focusTarget(name) {
   return { name, focusCount: 0, focus() { this.focusCount += 1; } };
@@ -37,5 +37,17 @@ test("focus is brought back when it starts outside the dialog", () => {
   trapTabKey(event, dialog, focusTarget("outside"));
 
   assert.equal(event.prevented, true);
+  assert.equal(first.focusCount, 1);
+});
+
+test("programmatic focus is kept inside the dialog", () => {
+  const first = focusTarget("first");
+  const outside = focusTarget("outside");
+  const event = { target: outside, stopped: false, stopPropagation() { this.stopped = true; } };
+  const dialog = { querySelector: () => first, contains: (target) => target === first, focus() {} };
+
+  keepFocusInDialog(event, dialog);
+
+  assert.equal(event.stopped, true);
   assert.equal(first.focusCount, 1);
 });

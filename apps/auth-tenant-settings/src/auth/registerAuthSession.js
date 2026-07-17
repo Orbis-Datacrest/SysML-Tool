@@ -1,5 +1,5 @@
 import { registerMfe } from "/packages/ui/src/moduleRegistry.js";
-import { trapTabKey } from "./dialogFocus.js";
+import { keepFocusInDialog, trapTabKey } from "./dialogFocus.js";
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 
@@ -13,6 +13,8 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   let messageKind = "error";
   let devCode = "";
   let logoutConfirmationOpen = false;
+  let restoreFocusTo = null;
+  let releaseModalFocus = () => {};
 
   const titles = { login: "Log in", signup: "Create your account", signupVerify: "Verify your email", forgot: "Forgot password", resetVerify: "Verify and reset password" };
   const description = () => ({
@@ -95,8 +97,15 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   function bindDialog() {
     const dialog = element.querySelector(".auth-modal");
     if (!dialog) return;
+    document.documentElement.classList.add("auth-modal-open");
+    const containFocus = (event) => keepFocusInDialog(event, dialog);
+    document.addEventListener("focusin", containFocus, true);
+    releaseModalFocus = () => {
+      document.documentElement.classList.remove("auth-modal-open");
+      document.removeEventListener("focusin", containFocus, true);
+    };
     dialog.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") { event.preventDefault(); modalOpen = false; render(); return; }
+      if (event.key === "Escape") { event.preventDefault(); return; }
       trapTabKey(event, dialog);
     });
     requestAnimationFrame(() => dialog.querySelector("input, button")?.focus());
@@ -163,7 +172,7 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   }
 
   function renderSignedOut() {
-    element.innerHTML = `<div class="auth-entry-actions"><button id="open-login" class="primary" type="button">Log In</button></div>
+    element.innerHTML = `<div class="auth-entry-actions"><button id="open-login" class="primary" type="button">Login</button></div>
       ${modalOpen ? `<div class="auth-modal-backdrop" role="presentation"><section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-description" tabindex="-1">
         <button id="close-auth" class="auth-close" type="button" aria-label="Close authentication">×</button>
         <aside class="auth-brand-panel" aria-hidden="true">
@@ -182,14 +191,21 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
           <div class="auth-modal-body">${authForm()}${message ? `<p class="auth-message ${messageKind}" role="${messageKind === "error" ? "alert" : "status"}">${escapeHtml(message)}</p>` : ""}${devCode ? `<button id="use-dev-code" class="auth-dev-code" type="button">Use local development code ${devCode}</button>` : ""}</div>
         </main>
       </section></div>` : ""}`;
-    element.querySelector("#open-login").addEventListener("click", () => { mode = "login"; modalOpen = true; message = ""; render(); });
-    element.querySelector("#close-auth")?.addEventListener("click", () => { modalOpen = false; message = ""; render(); });
-    element.querySelector(".auth-modal-backdrop")?.addEventListener("click", (event) => { if (event.target === event.currentTarget) { modalOpen = false; message = ""; render(); } });
+    element.querySelector("#open-login").addEventListener("click", (event) => { restoreFocusTo = event.currentTarget; mode = "login"; modalOpen = true; message = ""; render(); });
+    element.querySelector("#close-auth")?.addEventListener("click", () => {
+      modalOpen = false;
+      message = "";
+      render();
+      (restoreFocusTo?.isConnected ? restoreFocusTo : element.querySelector("#open-login"))?.focus();
+      restoreFocusTo = null;
+    });
     bindDialog();
   }
 
   function renderSignedIn() {
-    element.innerHTML = `<div class="auth-user"><span class="auth-avatar">${escapeHtml(state.user.email.slice(0, 1).toUpperCase())}</span><span class="auth-email" title="${escapeHtml(state.user.email)}">${escapeHtml(state.user.email)}</span>${state.view === "dashboard" ? `<button id="logout" type="button">Log out</button>` : ""}</div>
+    element.innerHTML = `${state.view === "dashboard"
+      ? `<div class="auth-entry-actions"><button id="logout" class="primary" type="button">Logout</button></div>`
+      : `<div class="auth-user"><span class="auth-avatar">${escapeHtml(state.user.email.slice(0, 1).toUpperCase())}</span><span class="auth-email" title="${escapeHtml(state.user.email)}">${escapeHtml(state.user.email)}</span></div>`}
       ${logoutConfirmationOpen ? `<div class="logout-confirmation-backdrop"><section class="logout-confirmation" role="dialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-description" tabindex="-1"><div class="logout-confirmation-icon" aria-hidden="true">!</div><div class="logout-confirmation-copy"><h2 id="logout-title">Log out?</h2><p id="logout-description">You will need to log in again to access your projects.</p></div><div class="logout-confirmation-actions"><button id="cancel-logout" type="button">Cancel</button><button id="confirm-logout" class="danger" type="button">Log out</button></div></section></div>` : ""}`;
     const closeConfirmation = () => { logoutConfirmationOpen = false; render(); element.querySelector("#logout")?.focus(); };
     element.querySelector("#logout")?.addEventListener("click", () => { logoutConfirmationOpen = true; render(); });
@@ -202,8 +218,20 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
     element.querySelector("#cancel-logout").focus();
   }
 
-  function render() { if (state.user) renderSignedIn(); else renderSignedOut(); }
+  function render() {
+    releaseModalFocus();
+    releaseModalFocus = () => {};
+    if (state.user) renderSignedIn(); else renderSignedOut();
+  }
   const stopAuthChanges = bus.on("auth:changed", render);
+  const stopAuthOpen = bus.on("auth:open", (requestedMode = "login") => {
+    if (state.user) return;
+    restoreFocusTo = document.activeElement;
+    mode = requestedMode === "signup" ? "signup" : "login";
+    modalOpen = true;
+    message = "";
+    render();
+  });
   render();
-  return stopAuthChanges;
+  return () => { releaseModalFocus(); stopAuthChanges(); stopAuthOpen(); };
 });
