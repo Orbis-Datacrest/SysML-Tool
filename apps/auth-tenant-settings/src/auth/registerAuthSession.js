@@ -13,6 +13,8 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
   let messageKind = "error";
   let devCode = "";
   let logoutConfirmationOpen = false;
+  let accountMenuOpen = false;
+  let accountSettingsOpen = false;
   let restoreFocusTo = null;
   let releaseModalFocus = () => {};
 
@@ -204,10 +206,26 @@ registerMfe("auth-session", (element, { state, api, bus }) => {
 
   function renderSignedIn() {
     element.innerHTML = `${state.view === "dashboard"
-      ? `<div class="auth-entry-actions"><button id="logout" class="primary" type="button">Logout</button></div>`
+      ? `<div class="dashboard-account-wrap">
+          ${accountMenuOpen ? `<section class="account-menu" aria-label="Account settings"><header><span class="auth-avatar">${escapeHtml(state.user.email.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(state.user.email.split("@")[0])}</strong><small>${escapeHtml(state.user.email)}</small></span></header><div class="account-menu-settings"><button id="account-settings" class="account-settings-button" type="button" aria-expanded="${accountSettingsOpen}"><span>⚙ Settings</span><strong>${accountSettingsOpen ? "Hide" : "Open"}</strong></button>${accountSettingsOpen ? `<div class="account-preferences"><small>Account</small><span>${escapeHtml(state.user.email)}</span></div>` : ""}<button id="theme-toggle" class="theme-setting" type="button" data-theme="${state.settings.theme}" aria-label="Switch to ${state.settings.theme === "dark" ? "light" : "dark"} mode"><span>${state.settings.theme === "dark" ? "☾" : "☀"} Theme</span><strong>${state.settings.theme}</strong></button></div><button id="logout" class="account-logout" type="button">↪ Log out</button></section>` : ""}
+          <button id="account-menu-toggle" class="dashboard-account-button" type="button" aria-expanded="${accountMenuOpen}"><span class="auth-avatar">${escapeHtml(state.user.email.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(state.user.email.split("@")[0])}</strong><small>${escapeHtml(state.user.email)}</small></span><b aria-hidden="true">⌃</b></button>
+        </div>`
       : `<div class="auth-user"><span class="auth-avatar">${escapeHtml(state.user.email.slice(0, 1).toUpperCase())}</span><span class="auth-email" title="${escapeHtml(state.user.email)}">${escapeHtml(state.user.email)}</span></div>`}
       ${logoutConfirmationOpen ? `<div class="logout-confirmation-backdrop"><section class="logout-confirmation" role="dialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-description" tabindex="-1"><div class="logout-confirmation-icon" aria-hidden="true">!</div><div class="logout-confirmation-copy"><h2 id="logout-title">Log out?</h2><p id="logout-description">You will need to log in again to access your projects.</p></div><div class="logout-confirmation-actions"><button id="cancel-logout" type="button">Cancel</button><button id="confirm-logout" class="danger" type="button">Log out</button></div></section></div>` : ""}`;
     const closeConfirmation = () => { logoutConfirmationOpen = false; render(); element.querySelector("#logout")?.focus(); };
+    element.querySelector("#account-menu-toggle")?.addEventListener("click", () => { accountMenuOpen = !accountMenuOpen; render(); });
+    element.querySelector("#account-settings")?.addEventListener("click", () => { accountSettingsOpen = !accountSettingsOpen; render(); });
+    element.querySelector("#theme-toggle")?.addEventListener("click", async () => {
+      const theme = state.settings.theme === "dark" ? "light" : "dark";
+      state.settings.theme = theme;
+      document.documentElement.dataset.theme = theme;
+      bus.emit("theme:changed", theme);
+      render();
+      try {
+        const result = await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme }) });
+        state.settings = { ...state.settings, ...result.settings, theme };
+      } catch (error) { bus.emit("toast", `Theme preference was not saved: ${error.message}`); }
+    });
     element.querySelector("#logout")?.addEventListener("click", () => { logoutConfirmationOpen = true; render(); });
     const dialog = element.querySelector(".logout-confirmation");
     if (!dialog) return;

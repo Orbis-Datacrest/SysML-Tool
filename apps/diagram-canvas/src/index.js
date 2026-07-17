@@ -1398,10 +1398,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     pointerDrag = detail;
     scheduleRender();
   }));
-  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, textPreset, clientX, clientY }) => {
+  subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, textPreset, crossDiagram, clientX, clientY }) => {
     const rect = element.getBoundingClientRect();
     const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-    if (inside && isPaletteItemAllowed(state.diagram?.type, type, kind)) {
+    const allowed = isPaletteItemAllowed(state.diagram?.type, type, kind) || (crossDiagram && type === "node");
+    if (inside && allowed) {
       if (type === "node") placePaletteElement(kind, clientX, clientY, variant, textPreset, label);
       if (type === "relationship") { state.selectedTool = { type, kind, label }; setSelection([]); }
     }

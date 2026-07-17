@@ -94,26 +94,47 @@ function elementPreview(kind, variant = "full") {
 }
 
 function paletteItems(items) {
-  return `<div class="palette-grid">${items.map((item) => `<button class="palette-item" draggable="false" data-kind="${item.kind}" data-variant="${item.variant ?? ""}" data-palette-type="${item.type}" title="${item.label}" aria-label="Drag ${item.label} to the canvas"><span class="palette-symbol">${elementPreview(item.shape ?? item.kind, item.variant)}</span><span class="palette-item-label">${item.label}</span></button>`).join("")}</div>`;
+  return `<div class="palette-grid">${items.map((item) => `<button class="palette-item" draggable="false" data-kind="${item.kind}" data-variant="${item.variant ?? ""}" data-palette-type="${item.type}" data-label="${item.label}" data-cross-diagram="${Boolean(item.crossDiagram)}" title="${item.label}${item.origin ? ` · ${item.origin}` : ""}" aria-label="Drag ${item.label} to the canvas"><span class="palette-symbol">${elementPreview(item.shape ?? item.kind, item.variant)}</span><span class="palette-item-label">${item.label}${item.origin ? `<small>${item.origin}</small>` : ""}</span></button>`).join("")}</div>`;
 }
 
 registerMfe("element-palette", (element, { state, bus }) => {
   const lifecycle = new AbortController();
   let pointerDragging = false;
+  let searchQuery = "";
   function render() {
     const diagramType = diagramCatalog.find((item) => item.value === state.diagram?.type) ?? diagramCatalog[0];
     const commonNodes = commonElements.filter((item) => item.type === "node");
     const diagramNodes = diagramType.palette.filter((item) => item.type === "node");
+    const currentKeys = new Set([...textElements, ...commonNodes, ...diagramNodes].map((item) => `${item.kind}|${item.variant ?? ""}|${item.label}`));
+    const discovered = new Map();
+    for (const source of diagramCatalog) {
+      for (const item of source.palette.filter((candidate) => candidate.type === "node")) {
+        const key = `${item.kind}|${item.variant ?? ""}|${item.label}`;
+        if (!discovered.has(key)) discovered.set(key, { ...item, origin: source.label, crossDiagram: !currentKeys.has(key) });
+      }
+    }
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    const searchResults = normalizedQuery ? [...discovered.values()].filter((item) => `${item.label} ${item.kind} ${item.origin}`.toLocaleLowerCase().includes(normalizedQuery)) : [];
     element.innerHTML = `<div class="panel palette-panel">
       <h2>Elements</h2>
-      <details open><summary><span>Text</span><span class="palette-count">${textElements.length}</span></summary>${paletteItems(textElements)}</details>
-      <details open><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
-      <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>
+      <label class="palette-search"><span>Find any element</span><input id="element-search" type="search" value="${searchQuery.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character])}" placeholder="Search all diagram types…" autocomplete="off"></label>
+      ${normalizedQuery ? `<section class="palette-search-results" aria-live="polite"><div class="palette-results-heading"><strong>Search results</strong><span>${searchResults.length}</span></div>${searchResults.length ? paletteItems(searchResults) : `<p class="palette-empty">No elements match “${searchQuery.replace(/[&<>'"]/g, "")}”. Try a name such as Actor, Block, or Requirement.</p>`}</section>` : `
+        <details open><summary><span>Text</span><span class="palette-count">${textElements.length}</span></summary>${paletteItems(textElements)}</details>
+        <details open><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
+        <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>`}
     </div>`;
+    const searchInput = element.querySelector("#element-search");
+    searchInput.addEventListener("input", () => {
+      searchQuery = searchInput.value;
+      render();
+      const nextInput = element.querySelector("#element-search");
+      nextInput.focus();
+      nextInput.setSelectionRange(searchQuery.length, searchQuery.length);
+    });
     element.querySelectorAll("[data-kind]").forEach((button) => {
-      const candidates = [...textElements, ...commonNodes, ...diagramNodes];
-      const item = candidates.find(({ kind, type, variant, label }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant && (!candidates.some((candidate) => candidate.kind === kind && candidate.type === type && candidate.label !== label) || label === button.title));
-      const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, preview: elementPreview(item.shape ?? item.kind, item.variant), clientY });
+      const candidates = [...textElements, ...commonNodes, ...diagramNodes, ...searchResults];
+      const item = candidates.find(({ kind, type, variant, label }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant && label === button.dataset.label);
+      const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, crossDiagram: button.dataset.crossDiagram === "true", preview: elementPreview(item.shape ?? item.kind, item.variant), clientY });
       button.addEventListener("mouseenter", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
       button.addEventListener("mousemove", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });
       button.addEventListener("focus", () => bus.emit("palette:hover", detail()));
@@ -136,7 +157,7 @@ registerMfe("element-palette", (element, { state, bus }) => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
           window.removeEventListener("pointercancel", up);
-          if (dragging && pointerEvent.type === "pointerup") bus.emit("palette:pointerdrop", { ...item, clientX: pointerEvent.clientX, clientY: pointerEvent.clientY });
+          if (dragging && pointerEvent.type === "pointerup") bus.emit("palette:pointerdrop", { ...item, crossDiagram: button.dataset.crossDiagram === "true", clientX: pointerEvent.clientX, clientY: pointerEvent.clientY });
           pointerDragging = false;
           bus.emit("palette:dragend");
           bus.emit("palette:hover", null);

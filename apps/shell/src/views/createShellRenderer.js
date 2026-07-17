@@ -3,6 +3,14 @@ import { resetEditorInteractionState } from "../app/state.js";
 import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js";
 import { diagramCatalog } from "../../../../packages/model-core/src/diagram-catalog.js";
 
+const dashboardIcons = {
+  logo: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6" r="2.5"/><circle cx="6" cy="16" r="2.5"/><circle cx="18" cy="16" r="2.5"/><path d="M12 8.5v3M7.8 14.5l2.5-2.5h3.4l2.5 2.5"/></svg>`,
+  grid: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
+  star: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>`,
+  activity: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2.4-7 4.2 14 2.4-7h5"/></svg>`,
+  folder: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h6l2-2h3l2 2h5v11H3z"/><path d="M7 11h10v5H7z"/></svg>`
+};
+
 export function createShellRenderer({
   activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, nextTheme, projectUrl,
   redoDiagram, rememberPage, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
@@ -23,7 +31,7 @@ function renderShell() {
   applyTheme(state.settings.theme);
   const isLanding = state.view === "dashboard" && !state.user;
   document.querySelector("#app").innerHTML = `
-    <header class="topbar ${isLanding ? "landing-topbar" : ""}">
+    <header class="topbar ${isLanding ? "landing-topbar" : ""} ${state.view === "dashboard" && state.user ? "dashboard-topbar" : ""}">
       <div class="topbar-left">
         ${isLanding ? `<div class="landing-brand" aria-label="SysML Studio"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></div>` : `<button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></button>`}
         ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">${icons.save}</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
@@ -47,7 +55,7 @@ function renderShell() {
           </div>
         </div>` : ""}
         <section id="topbar-project-export" class="topbar-export"></section>
-        ${state.view === "dashboard" ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
+        ${isLanding ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
     </header>
     ${state.view === "editor" ? `
@@ -121,7 +129,23 @@ function renderShell() {
         <section id="about" class="landing-about"><span>SysML Studio</span><p>Purpose-built for teams designing the systems that shape tomorrow.</p></section>
       </main>
     ` : `
-      <main class="dashboard-host"><section id="project-dashboard"></section></main>
+      <main class="dashboard-workspace">
+        <aside class="dashboard-sidebar" aria-label="Workspace navigation">
+          <div class="dashboard-sidebar-brand"><span class="dashboard-logo">${dashboardIcons.logo}</span><span><strong>SysML Studio</strong><small>Workspace</small></span></div>
+          <nav class="dashboard-nav" aria-label="Dashboard">
+            <small>Navigate</small>
+            <button class="active" type="button" data-dashboard-view="workspace"><span class="dashboard-nav-icon">${dashboardIcons.grid}</span><span>Workspace</span><i></i></button>
+            <button type="button" data-dashboard-view="starred"><span class="dashboard-nav-icon">${dashboardIcons.star}</span><span>Starred</span></button>
+            <button type="button" data-dashboard-view="activity"><span class="dashboard-nav-icon">${dashboardIcons.activity}</span><span>Activity</span></button>
+          </nav>
+          <section class="dashboard-pinned"><header><small>Pinned</small><span>1</span></header><button type="button" disabled><span class="dashboard-nav-icon">${dashboardIcons.folder}</span><span>Untitled Project</span></button></section>
+          <section id="auth-session" class="dashboard-account"></section>
+        </aside>
+        <section class="dashboard-main">
+          <header class="dashboard-context"><span>Workspace</span><b aria-hidden="true">/</b><strong>Overview</strong></header>
+          <section class="dashboard-host"><section id="project-dashboard"></section></section>
+        </section>
+      </main>
     `}
   `;
   // Sidebar widths are live application state, so apply them after rendering instead of embedding presentation in the markup.
@@ -175,6 +199,10 @@ function renderShell() {
     if (state.view === "editor") showDashboard();
   });
   document.querySelectorAll("[data-auth-mode]").forEach((button) => button.addEventListener("click", () => bus.emit("auth:open", button.dataset.authMode)));
+  document.querySelectorAll("[data-dashboard-view]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-dashboard-view]").forEach((item) => item.classList.toggle("active", item === button));
+    bus.emit("dashboard:view", button.dataset.dashboardView);
+  }));
   const switchTab = (diagram) => {
     if (!diagram || diagram.id === state.diagram?.id) return;
     activateDiagramTab(state, diagram);

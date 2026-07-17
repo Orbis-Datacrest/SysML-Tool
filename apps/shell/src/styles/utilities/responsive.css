@@ -6,6 +6,7 @@
 @media (max-width: 1023px) {
   .panel { padding: 10px; }
   .save-status { display: none; }
+  .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* Side panels become overlay drawers before their minimum widths can squeeze the canvas. */
 @media (max-width: 899px) {
@@ -17,6 +18,16 @@
   .sidebar-resize-handle { display: none; }
 }
 @media (max-width: 767px) {
+  .dashboard-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .dashboard-main { grid-template-rows: minmax(0, 1fr); }
+  .dashboard-context { display: none; }
+  .dashboard-sidebar { min-height: 0; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dashboard-sidebar-brand { min-height: 58px; border-bottom: 0; }
+  .dashboard-sidebar-brand small, .dashboard-nav, .dashboard-pinned { display: none; }
+  .dashboard-account { margin: 0 0 0 auto; padding: 8px 12px; border-top: 0; }
+  .dashboard-account-button { width: 48px; grid-template-columns: 34px; }
+  .dashboard-account-button > span:nth-child(2), .dashboard-account-button > b { display: none; }
+  .account-menu { right: 0; bottom: auto; left: auto; top: calc(100% + 8px); width: 220px; }
   .topbar { gap: 5px; }
   .topbar-left, .topbar-actions { gap: 4px; }
   .topbar .icon-button, .mobile-only.icon-button { width: 44px; height: 44px; }
@@ -35,8 +46,11 @@
   .format-toolbar, .relationship-toolbar { right: 8px; left: 8px !important; max-width: calc(100vw - 16px); max-height: calc(100vh - var(--topbar-height) - 16px); overflow: auto; white-space: normal; }
   .share-popover { position: fixed; top: var(--topbar-height); right: 8px; left: 8px; width: auto; max-height: calc(100vh - var(--topbar-height) - 8px); max-height: calc(100dvh - var(--topbar-height) - 8px); overflow: auto; }
   .dashboard-shell { width: min(100% - 24px, 1120px); padding: 18px 0 32px; }
-  .dashboard-hero { align-items: stretch; flex-direction: column; gap: 18px; padding: 20px; }
+  .dashboard-hero { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 18px; padding: 20px; }
   .dashboard-new { width: 100%; }
+  .dashboard-stats { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-section-heading { align-items: stretch; flex-direction: column; }
+  .project-search { width: 100%; }
   .project-grid { grid-template-columns: minmax(0, 1fr); }
   .recent-item { align-items: flex-start; flex-direction: column; gap: 4px; }
   .history-backdrop { inset: var(--topbar-height) 0 0; align-items: flex-end; }
