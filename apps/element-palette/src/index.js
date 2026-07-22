@@ -50,9 +50,10 @@ function previewText(kind, y = 27, className = "preview-text") {
 
 function elementPreview(kind, variant = "full") {
   if (["association", "link", "connector", "communication-path", "control-flow", "object-flow", "transition", "item-flow", "binding-connector"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M5 24h62"/>${["control-flow", "object-flow", "transition", "item-flow"].includes(kind) ? `<path d="m58 18 9 6-9 6"/>` : ""}</svg>`;
-  if (["dependency", "note-connector", "include", "extend", "package-merge", "satisfy", "verify", "refine", "trace", "derive-reqt"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path stroke-dasharray="6 4" d="M5 24h62"/><path d="m58 18 9 6-9 6"/></svg>`;
+  if (["include", "extend"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path stroke-dasharray="6 6" d="M5 24h62m-9-6 9 6-9 6"/><text class="preview-small-text" x="36" y="17" text-anchor="middle">«${kind}»</text></svg>`;
+  if (["dependency", "note-connector", "package-merge", "satisfy", "verify", "refine", "trace", "derive-reqt"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path stroke-dasharray="6 4" d="M5 24h62"/><path d="m58 18 9 6-9 6"/></svg>`;
   if (["generalization", "extension"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M5 24h50"/><path class="shape-fill" d="m55 15 12 9-12 9Z"/></svg>`;
-  if (["aggregation", "composition"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M17 24h50"/><path class="${kind === "composition" ? "solid" : "shape-fill"}" d="M5 24l12-8 12 8-12 8Z"/></svg>`;
+  if (["aggregation", "composition"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path class="${kind === "composition" ? "solid" : "shape-fill"}" d="M5 24 17 17.5 29 24 17 30.5Z"/><path d="M29 24h38"/></svg>`;
   if (["synchronous-message", "asynchronous-message", "numbered-message"].includes(kind)) return `<svg viewBox="0 0 72 48" aria-hidden="true"><path d="M5 24h62m-9-6 9 6-9 6"/>${kind === "numbered-message" ? `<text class="preview-text" x="8" y="20">1.1</text>` : ""}</svg>`;
   if (kind === "return-message") return `<svg viewBox="0 0 72 48" aria-hidden="true"><path stroke-dasharray="6 4" d="M67 24H5m9-6-9 6 9 6"/></svg>`;
   if (humanKinds.has(kind)) return `<svg viewBox="0 0 72 58" aria-hidden="true"><circle cx="36" cy="10" r="8"/><path d="M36 18v21M19 25h34M36 39 20 56M36 39l16 17"/></svg>`;

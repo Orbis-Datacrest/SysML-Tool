@@ -233,10 +233,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
 
   function renderMarkerDefinitions() {
     return `<defs>
-      <marker id="open-arrow" viewBox="0 0 12 12" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M2,1 L10,6 L2,11" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+      <marker id="open-arrow" viewBox="0 0 10 17" markerWidth="10" markerHeight="17" refX="9" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1 1 8 8.5 1 16M1 8.5h7" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
       <marker id="hollow-triangle" viewBox="0 0 14 14" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1.5,1.5 L12,7 L1.5,12.5 Z" fill="var(--canvas)" stroke-width="1.5" stroke-linejoin="round"></path></marker>
-      <marker id="filled-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke marker-fill" d="M1,6 L8,1 L15,6 L8,11 Z" stroke-linejoin="round"></path></marker>
-      <marker id="hollow-diamond" viewBox="0 0 16 12" markerWidth="16" markerHeight="12" refX="1" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1,6 L8,1 L15,6 L8,11 Z" fill="var(--canvas)" stroke-width="1.5" stroke-linejoin="round"></path></marker>
+      <marker id="filled-diamond" viewBox="0 0 30 17" markerWidth="30" markerHeight="17" refX="1" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke marker-fill" d="M1 8.5 15 1 29 8.5 15 16Z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+      <marker id="hollow-diamond" viewBox="0 0 30 17" markerWidth="30" markerHeight="17" refX="1" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="marker-stroke" d="M1 8.5 15 1 29 8.5 15 16Z" fill="var(--canvas)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></marker>
       <marker id="containment" viewBox="0 0 17 17" markerWidth="17" markerHeight="17" refX="2" refY="8.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><circle class="marker-stroke" cx="8.5" cy="8.5" r="6.5" fill="var(--canvas)"></circle><path class="marker-stroke" d="M5,8.5 H12 M8.5,5 V12" stroke-width="1.3"></path></marker>
     </defs>`;
   }
@@ -732,11 +732,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         ${renderAiGhosts(diagram)}
         ${renderGuides()}
         ${renderCollaborationOverlay(diagram)}
-        ${selectionBox ? `<div class="group-selection-box" data-selection-area title="Drag anywhere to move selection"><span class="selection-frame-label">${selectedIds().length} selected</span></div>` : ""}
+        ${selectionBox ? `<div class="group-selection-box" data-selection-area title="Drag to move selection · Double-click a member to select it individually"><span class="selection-frame-label">${selectedIds().length} selected</span></div>` : ""}
         ${diagram.elements.map((node) => {
           const selected = selectedIds().includes(node.id); const style = nodeStyle(node);
           runtimeStyles.set(`node-${node.id}`, `.diagram-node[data-node="${runtimeStyles.escape(node.id)}"]`, { left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px`, "--node-fill": style.fillColor, "--node-border": style.borderColor, "--node-border-width": `${style.borderWidth}px`, "--node-text-color": style.textColor, "--node-text-size": `${style.textSize}px`, "--node-font-weight": style.textStyle.includes("bold") ? 700 : 400, "--node-font-style": style.textStyle.includes("italic") ? "italic" : "normal" });
-          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="Double-click to edit text">
+          return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="${node.groupId ? "Double-click to select this group member" : "Double-click to edit text"}">
             ${renderNodeContent(node)}${renderModelPorts(node)}
             ${selected ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
@@ -906,14 +906,22 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         const repeatedPress = event.button === 0 && lastNodePress?.nodeId === nodeElement.dataset.node && pressedAt - lastNodePress.at < 500;
         lastNodePress = repeatedPress ? null : { nodeId: nodeElement.dataset.node, at: pressedAt };
         if (event.button === 0 && (event.detail >= 2 || repeatedPress)) {
+          const node = state.diagram.elements.find((item) => item.id === nodeElement.dataset.node);
+          if (node?.groupId) { selectIndividualGroupMember(event, node.id); return; }
           beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection);
           return;
         }
         startNodeGesture(event, nodeElement.dataset.node);
       });
-      nodeElement.addEventListener("dblclick", (event) => { if (state.selectedTool?.type !== "comment" && !commentWriting()) beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection); });
+      nodeElement.addEventListener("dblclick", (event) => {
+        if (state.selectedTool?.type === "comment" || commentWriting()) return;
+        const node = state.diagram.elements.find((item) => item.id === nodeElement.dataset.node);
+        if (node?.groupId) selectIndividualGroupMember(event, node.id);
+        else beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection);
+      });
       nodeElement.addEventListener("click", (event) => {
         if (state.selectedTool?.type === "comment" || commentWriting()) return;
+        if (state.diagram.elements.find((item) => item.id === nodeElement.dataset.node)?.groupId) return;
         const section = event.target.closest("[data-edit-section]")?.dataset.editSection;
         if (section && !event.shiftKey && !nodeElement.classList.contains("locked")) beginNodeEditing(event, nodeElement.dataset.node, section);
       });
@@ -949,7 +957,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         placeCaretAtPoint(input, editingNode?.clientX ?? 0, editingNode?.clientY ?? 0);
       });
     });
-    element.querySelector("[data-selection-area]")?.addEventListener("pointerdown", startSelectionGesture);
+    const selectionArea = element.querySelector("[data-selection-area]");
+    selectionArea?.addEventListener("pointerdown", startSelectionGesture);
+    selectionArea?.addEventListener("dblclick", (event) => {
+      const groupedMember = document.elementsFromPoint?.(event.clientX, event.clientY).find((target) => target.matches?.(".diagram-node[data-node]"));
+      if (groupedMember) selectIndividualGroupMember(event, groupedMember.dataset.node);
+    });
+    selectionArea?.addEventListener("contextmenu", (event) => openContextMenu(event));
     element.querySelectorAll("[data-style-button]").forEach((button) => button.addEventListener("click", () => {
       const selected = state.diagram.elements.filter((node) => selectedIds().includes(node.id));
       const allBold = selected.length > 0 && selected.every((node) => nodeStyle(node).textStyle === "bold");
@@ -1076,21 +1090,33 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function startNodeGesture(event, nodeId) {
     if (event.button !== 0 || commentWriting()) return;
     event.preventDefault(); event.stopPropagation(); contextMenu = null; relationshipToolbar = null;
-    const clickedIds = expandGroupedSelection(state.diagram.elements, [nodeId]);
+    const clickedNode = state.diagram.elements.find((node) => node.id === nodeId);
+    const individualGroupMove = Boolean(clickedNode?.groupId && selectedIds().length === 1 && selectedIds()[0] === nodeId);
+    const clickedIds = individualGroupMove ? [nodeId] : expandGroupedSelection(state.diagram.elements, [nodeId]);
     let nextSelection;
-    if (event.shiftKey) {
+    if (individualGroupMove) nextSelection = clickedIds;
+    else if (event.shiftKey) {
       const removing = clickedIds.every((itemId) => selectedIds().includes(itemId));
       nextSelection = removing ? selectedIds().filter((itemId) => !clickedIds.includes(itemId)) : [...selectedIds(), ...clickedIds];
     } else nextSelection = selectedIds().includes(nodeId) ? selectedIds() : clickedIds;
     setSelection(nextSelection, null, false);
     const movableIds = nextSelection.filter((itemId) => !state.diagram.elements.find((node) => node.id === itemId)?.locked);
     if (!movableIds.includes(nodeId)) return;
-    gesture = { type: "move", start: pointOnCanvas(event), ids: movableIds, originals: Object.fromEntries(state.diagram.elements.filter((node) => movableIds.includes(node.id)).map((node) => [node.id, structuredClone(node)])), frameOriginal: selectedIds().length > 1 ? structuredClone(selectionFrame ?? selectionBounds(state.diagram.elements, selectedIds())) : null, diagramBefore: structuredClone(state.diagram), changed: false };
+    gesture = { type: "move", start: pointOnCanvas(event), ids: movableIds, originals: Object.fromEntries(state.diagram.elements.filter((node) => movableIds.includes(node.id)).map((node) => [node.id, structuredClone(node)])), frameOriginal: individualGroupMove ? null : selectedIds().length > 1 ? structuredClone(selectionFrame ?? selectionBounds(state.diagram.elements, selectedIds())) : null, individualGroupMove, diagramBefore: structuredClone(state.diagram), changed: false };
+  }
+
+  function selectIndividualGroupMember(event, nodeId) {
+    const node = state.diagram.elements.find((item) => item.id === nodeId);
+    if (!node?.groupId) return;
+    event.preventDefault(); event.stopPropagation();
+    gesture = null; lastNodePress = null; contextMenu = null; relationshipToolbar = null;
+    setSelection([nodeId], null, false);
+    render();
   }
 
   function openContextMenu(event, nodeId) {
     event.preventDefault(); event.stopPropagation(); relationshipToolbar = null;
-    if (!selectedIds().includes(nodeId)) setSelection(expandGroupedSelection(state.diagram.elements, [nodeId]), null, false);
+    if (nodeId && !selectedIds().includes(nodeId)) setSelection(expandGroupedSelection(state.diagram.elements, [nodeId]), null, false);
     // The menu is clamped after render using its actual size.
     contextMenu = { x: event.clientX, y: event.clientY };
     render();
@@ -1448,7 +1474,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     }
     const next = structuredClone(state.diagram); const dx = point.x - gesture.start.x; const dy = point.y - gesture.start.y;
     if (gesture.type === "move") {
-      moveSelection(next.elements, gesture.ids, gesture.originals, dx, dy, CANVAS, event.altKey ? 1 : (gridSize || 1));
+      moveSelection(next.elements, gesture.ids, gesture.originals, dx, dy, CANVAS, event.altKey ? 1 : (gridSize || 1), !gesture.individualGroupMove);
       const bounds = selectionBounds(next.elements, gesture.ids);
       snapGuides = bounds ? snapLinesForMove(next.elements, gesture.ids, bounds) : [];
     }

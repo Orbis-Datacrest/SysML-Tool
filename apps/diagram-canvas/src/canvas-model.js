@@ -59,12 +59,14 @@ export function applyElementStyle(elements, ids, property, value, defaults) {
   });
 }
 
-export function moveSelection(elements, selectedIds, originals, dx, dy, canvas, grid = GRID_SIZE) {
-  const bounds = selectionBounds(Object.values(originals), selectedIds);
+export function moveSelection(elements, selectedIds, originals, dx, dy, canvas, grid = GRID_SIZE, expandGroups = true) {
+  const movingIds = expandGroups ? expandGroupedSelection(elements, selectedIds) : selectedIds;
+  const bounds = selectionBounds(Object.values(originals), movingIds);
   if (!bounds) return;
   const safeDx = clamp(snap(dx, grid), -bounds.left, canvas.width - bounds.right);
   const safeDy = clamp(snap(dy, grid), -bounds.top, canvas.height - bounds.bottom);
   for (const node of elements) {
+    if (!movingIds.includes(node.id)) continue;
     const original = originals[node.id];
     if (!original || original.locked) continue;
     node.x = original.x + safeDx;
