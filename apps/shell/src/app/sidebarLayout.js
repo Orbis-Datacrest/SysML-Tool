@@ -3,7 +3,7 @@ export const SIDEBAR_LAYOUT_STORAGE_KEY = "sysml.sidebarLayout";
 export const SIDEBAR_CONSTRAINTS = Object.freeze({
   left: Object.freeze({ minimum: 240, maximum: 420, defaultWidth: 300 }),
   right: Object.freeze({ minimum: 280, maximum: 480, defaultWidth: 360 }),
-  collapsedWidth: 36,
+  collapsedWidth: 0,
   minimumCanvasWidth: 360
 });
 

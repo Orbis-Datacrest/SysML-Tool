@@ -10,7 +10,7 @@
 }
 /* Side panels become overlay drawers before their minimum widths can squeeze the canvas. */
 @media (max-width: 899px) {
-  .workspace { grid-template-columns: 36px minmax(0, 1fr) 36px; }
+  .workspace { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .left-rail[data-open="true"], .right-rail[data-open="true"] { position: fixed; top: var(--topbar-height); bottom: 0; z-index: 105; width: min(var(--left-sidebar-width), 88vw); height: auto; box-shadow: 18px 0 50px var(--shadow-color); }
   .left-rail[data-open="true"] { left: 0; }
   .right-rail[data-open="true"] { right: 0; width: min(var(--right-sidebar-width), 88vw); box-shadow: -18px 0 50px var(--shadow-color); }

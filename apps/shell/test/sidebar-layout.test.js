@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SIDEBAR_LAYOUT_STORAGE_KEY, clampSidebarWidth, createSidebarLayout, nextRightPanelState, persistSidebarLayout } from "../src/app/sidebarLayout.js";
+import { SIDEBAR_CONSTRAINTS, SIDEBAR_LAYOUT_STORAGE_KEY, clampSidebarWidth, createSidebarLayout, nextRightPanelState, persistSidebarLayout } from "../src/app/sidebarLayout.js";
+
+test("collapsed sidebars reserve no canvas width because their expand controls float", () => {
+  assert.equal(SIDEBAR_CONSTRAINTS.collapsedWidth, 0);
+});
 
 test("sidebar widths are restored and clamped to usable limits", () => {
   const storage = { getItem: () => JSON.stringify({ left: { open: false, width: 12 }, right: { open: true, width: 900 } }) };
