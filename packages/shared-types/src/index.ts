@@ -255,6 +255,28 @@ export interface AiProviderConfig {
   active: boolean;
 }
 
+export interface CollaborationComment {
+  id: string;
+  thread_id: string;
+  diagram_id?: string;
+  anchor_type: "element" | "canvas";
+  anchor_id: string;
+  anchor_x?: number | null;
+  anchor_y?: number | null;
+  parent_id?: string | null;
+  body: string;
+  mentions: string[];
+  status: "open" | "resolved" | "deleted";
+  author: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  edited_at?: string | null;
+  deleted_at?: string | null;
+  unread: boolean;
+  permissions: { reply: boolean; edit: boolean; delete: boolean; resolve: boolean; reopen: boolean };
+}
+
 export interface AiAdvisorRequest {
   tenant_id: string;
   project_id: string;

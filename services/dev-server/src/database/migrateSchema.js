@@ -135,6 +135,14 @@ export function migrateSchema(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS collaboration_comment_reads (
+      tenant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      read_at TEXT NOT NULL,
+      PRIMARY KEY (thread_id, user_id)
+    );
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
@@ -305,6 +313,15 @@ export function migrateSchema(db) {
       updated_at TEXT NOT NULL
     );
   `);
+
+  const commentColumns = new Set(db.prepare("PRAGMA table_info(collaboration_comments)").all().map((column) => column.name));
+  const requiredCommentColumns = [
+    ["anchor_x", "REAL"], ["anchor_y", "REAL"], ["edited_at", "TEXT"], ["deleted_at", "TEXT"]
+  ];
+  for (const [name, definition] of requiredCommentColumns) {
+    if (!commentColumns.has(name)) db.exec(`ALTER TABLE collaboration_comments ADD COLUMN ${name} ${definition}`);
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS collaboration_comments_diagram_idx ON collaboration_comments(tenant_id, project_id, diagram_id, created_at)");
 
   // CREATE TABLE IF NOT EXISTS does not evolve an existing SQLite table. Keep
   // this additive upgrade idempotent so databases created by earlier AI

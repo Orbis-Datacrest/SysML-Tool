@@ -13,6 +13,8 @@ import {
 import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
 import { createNodeRenderer } from "./rendering/createNodeRenderer.js";
 import { createScopedStyles } from "../../../packages/ui/src/scopedStyles.js";
+import { CommentComposer, CommentPin, CommentThread } from "./comments/commentComponents.js";
+import { buildCommentThreads, commentAnchor, commentToolCanWrite, floatingCommentPosition } from "./comments/commentState.js";
 
 function id(prefix) { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
 function escapeHtml(value = "") {
@@ -105,11 +107,20 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let shortcutHelpOpen = false;
   let printPreviewOpen = false;
   let collaboration = state.collaboration ?? { presence: [], comments: [] };
+  let selectedCommentThreadId = null;
+  let commentDraft = null;
+  let replyDraft = { body: "", error: "", loading: false };
+  let editingComment = null;
+  let commentActionError = "";
+  let retryCommentAction = null;
   let aiPreview = null;
   let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
   const editorValue = (input) => "value" in input ? input.value : input.textContent;
+  const commentThreads = () => buildCommentThreads(collaboration.comments ?? []);
+  const selectedCommentThread = () => commentThreads().find((thread) => thread.id === selectedCommentThreadId) ?? null;
+  const commentWriting = () => Boolean(commentDraft || replyDraft.loading || editingComment?.loading || element.querySelector(".comment-composer:focus-within"));
 
   const scheduleRender = () => {
     if (renderFrame !== null) return;
@@ -339,7 +350,158 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     positionFormattingToolbar();
     positionPointerSurface(".relationship-toolbar", relationshipToolbar);
     positionPointerSurface(".canvas-context-menu", contextMenu);
+    positionCommentSurfaces();
     positionShortcutHelp();
+  }
+
+  function positionCommentSurface(selector, anchor) {
+    const surface = element.querySelector(selector);
+    if (!surface || !anchor) return;
+    const position = floatingCommentPosition({ anchor, hostRect: element.getBoundingClientRect(), scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, zoom, width: surface.offsetWidth, height: surface.offsetHeight });
+    if (position) runtimeStyles.set(`comment-surface-${selector}`, selector, { left: `${position.left}px`, top: `${position.top}px` });
+  }
+
+  function positionCommentSurfaces() {
+    const thread = selectedCommentThread();
+    if (thread) positionCommentSurface(".comment-thread", commentAnchor(thread, state.diagram?.elements ?? []));
+    if (commentDraft) positionCommentSurface(".comment-new-surface", commentDraft.anchor);
+  }
+
+  function closeCommentUi({ leaveTool = false } = {}) {
+    if (document.activeElement?.closest?.(".comment-composer")) document.activeElement.blur();
+    selectedCommentThreadId = null;
+    commentDraft = null;
+    replyDraft = { body: "", error: "", loading: false };
+    editingComment = null;
+    commentActionError = "";
+    retryCommentAction = null;
+    if (!leaveTool && state.selectedTool?.type === "comment") clearSelectedTool();
+    render();
+  }
+
+  function requestCommentCreate(input, { onSuccess, onError }) {
+    bus.emit("comment:create", { input, onSuccess, onError });
+  }
+
+  function requestCommentUpdate(commentId, input, { onSuccess, onError }) {
+    bus.emit("comment:update", { commentId, input, onSuccess, onError });
+  }
+
+  function openCommentThread(threadId) {
+    selectedCommentThreadId = threadId;
+    (collaboration.comments ?? []).filter((comment) => (comment.thread_id || comment.id) === threadId).forEach((comment) => { comment.unread = false; });
+    commentDraft = null;
+    editingComment = null;
+    replyDraft = { body: "", error: "", loading: false };
+    commentActionError = "";
+    clearSelectedTool();
+    render();
+    requestCommentUpdate(threadId, { action: "mark-read" }, { onSuccess: () => {}, onError: () => {} });
+  }
+
+  function beginComment(anchorType, anchorId, anchor) {
+    if (!commentToolCanWrite(collaboration)) return;
+    selectedCommentThreadId = null;
+    editingComment = null;
+    commentDraft = { anchor_type: anchorType, anchor_id: anchorId, anchor_x: anchor.x, anchor_y: anchor.y, anchor, body: "", error: "", loading: false };
+    contextMenu = null; relationshipToolbar = null; gesture = null;
+    render();
+  }
+
+  function runCommentAction(commentId, input, onSuccess = () => {}) {
+    commentActionError = "";
+    retryCommentAction = () => runCommentAction(commentId, input, onSuccess);
+    requestCommentUpdate(commentId, input, {
+      onSuccess: (result) => { commentActionError = ""; retryCommentAction = null; onSuccess(result); render(); },
+      onError: (error) => { commentActionError = error.message; render(); }
+    });
+  }
+
+  function bindCommentEvents() {
+    element.querySelectorAll("[data-comment-thread]").forEach((pin) => pin.addEventListener("click", (event) => {
+      event.preventDefault(); event.stopPropagation(); openCommentThread(pin.dataset.commentThread);
+    }));
+    element.querySelectorAll("[data-comment-thread]").forEach((pin) => pin.addEventListener("pointerdown", (event) => event.stopPropagation()));
+    element.querySelector("[data-comment-close]")?.addEventListener("click", () => closeCommentUi());
+    element.querySelector("[data-comment-retry]")?.addEventListener("click", () => retryCommentAction?.());
+    element.querySelector("[data-comment-copy-link]")?.addEventListener("click", async () => {
+      const url = new URL(window.location.href); url.hash = `comment-${selectedCommentThreadId}`;
+      let copied = false;
+      try { await navigator.clipboard.writeText(url.toString()); copied = true; }
+      catch {
+        const fallback = document.createElement("textarea");
+        fallback.value = url.toString(); fallback.setAttribute("readonly", ""); fallback.style.position = "fixed"; fallback.style.opacity = "0";
+        document.body.append(fallback); fallback.select();
+        try { copied = document.execCommand("copy"); } catch { copied = false; }
+        fallback.remove();
+      }
+      bus.emit("toast", copied ? "Comment link copied" : "Could not copy the comment link");
+    });
+    element.querySelector("[data-comment-mark-unread]")?.addEventListener("click", () => {
+      const threadId = selectedCommentThreadId;
+      runCommentAction(threadId, { action: "mark-unread" }, () => { selectedCommentThreadId = null; });
+    });
+    element.querySelectorAll("[data-comment-action]").forEach((button) => button.addEventListener("click", () => runCommentAction(selectedCommentThreadId, { action: button.dataset.commentAction })));
+    element.querySelectorAll("[data-comment-edit]").forEach((button) => button.addEventListener("click", () => {
+      const item = (collaboration.comments ?? []).find((comment) => comment.id === button.dataset.commentEdit);
+      if (!item) return;
+      editingComment = { id: item.id, body: item.body, error: "", loading: false };
+      render();
+    }));
+    element.querySelectorAll("[data-comment-delete]").forEach((button) => button.addEventListener("click", () => runCommentAction(button.dataset.commentDelete, { action: "delete" }, () => {
+      if (button.dataset.commentDelete === selectedCommentThreadId) selectedCommentThreadId = null;
+    })));
+    element.querySelectorAll("[data-comment-composer]").forEach((form) => {
+      const mode = form.dataset.commentMode;
+      const textarea = form.querySelector("[data-comment-body]");
+      textarea.addEventListener("pointerdown", (event) => event.stopPropagation());
+      textarea.addEventListener("input", () => {
+        if (mode === "new" && commentDraft) commentDraft.body = textarea.value;
+        if (mode === "reply") replyDraft.body = textarea.value;
+        if (mode === "edit" && editingComment) editingComment.body = textarea.value;
+      });
+      textarea.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeCommentUi(); }
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); form.requestSubmit(); }
+      });
+      form.querySelector("[data-comment-cancel]").addEventListener("click", () => {
+        closeCommentUi();
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault(); event.stopPropagation();
+        const body = textarea.value.trim();
+        if (!body) {
+          if (mode === "new") commentDraft.error = "Write a comment before posting.";
+          if (mode === "reply") replyDraft.error = "Write a reply before posting.";
+          if (mode === "edit") editingComment.error = "Comment text cannot be empty.";
+          textarea.focus(); return;
+        }
+        textarea.blur();
+        if (mode === "new") {
+          commentDraft.loading = true; commentDraft.error = ""; render();
+          const draft = { ...commentDraft };
+          requestCommentCreate({ diagram_id: state.diagram.id, anchor_type: draft.anchor_type, anchor_id: draft.anchor_id, anchor_x: draft.anchor_x, anchor_y: draft.anchor_y, body }, {
+            onSuccess: () => closeCommentUi(),
+            onError: (error) => { if (commentDraft) { commentDraft.loading = false; commentDraft.error = error.message; render(); } }
+          });
+        } else if (mode === "reply") {
+          replyDraft = { body, error: "", loading: true }; render();
+          requestCommentCreate({ diagram_id: state.diagram.id, parent_id: selectedCommentThreadId, body }, {
+            onSuccess: () => closeCommentUi(),
+            onError: (error) => { replyDraft.loading = false; replyDraft.error = error.message; render(); }
+          });
+        } else if (editingComment) {
+          const commentId = editingComment.id;
+          editingComment = { ...editingComment, body, error: "", loading: true }; render();
+          requestCommentUpdate(commentId, { action: "edit", body }, {
+            onSuccess: () => { editingComment = null; render(); },
+            onError: (error) => { editingComment.loading = false; editingComment.error = error.message; render(); }
+          });
+        }
+      });
+    });
+    const autofocus = element.querySelector(".comment-new-surface textarea, .comment-entry .comment-composer textarea");
+    if (autofocus && !document.activeElement?.closest?.(".comment-composer")) requestAnimationFrame(() => { autofocus.focus(); autofocus.setSelectionRange(autofocus.value.length, autofocus.value.length); });
   }
 
   function positionShortcutHelp() {
@@ -410,7 +572,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <button data-command="delete" class="context-danger" role="menuitem">Delete <kbd>Del</kbd></button>
       <span class="context-separator" role="separator"></span>
       <button data-command="cut" role="menuitem">Cut <kbd>Ctrl+X</kbd></button><button data-command="copy" role="menuitem">Copy <kbd>Ctrl+C</kbd></button><button data-command="duplicate" role="menuitem">Duplicate <kbd>Ctrl+D</kbd></button>
-      <button data-command="comment" role="menuitem">Comment on selection</button>
+      ${commentToolCanWrite(collaboration) ? `<button data-command="comment" role="menuitem">Comment on selection</button>` : ""}
       <span class="context-separator"></span>
       ${selected.length > 1 && !completeSingleGroup ? `<button data-command="group" role="menuitem">Group <kbd>Ctrl+G</kbd></button>` : ""}
       ${selectedGroups.size ? `<button data-command="ungroup" role="menuitem">Ungroup <kbd>⇧Ctrl+G</kbd></button>` : ""}
@@ -434,13 +596,24 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       runtimeStyles.set(`live-cursor-${index}`, `[data-live-cursor="${index}"]`, { left: `${person.cursor.x}px`, top: `${person.cursor.y}px`, "--collab-color": normalizeColor(person.color, "#5aa7ff") });
       return `<div class="live-cursor" data-live-cursor="${index}"><span></span><strong>${escapeHtml(person.name)}</strong></div>`;
     });
-    const comments = (collaboration.comments ?? []).map((comment, index) => {
-      const node = nodeMap.get(comment.anchor_id);
-      if (!node) return "";
-      runtimeStyles.set(`comment-pin-${index}`, `[data-comment-pin="${index}"]`, { left: `${node.x + node.width - 8}px`, top: `${node.y - 8}px` });
-      return `<button class="comment-pin" data-comment-pin="${index}" data-focus-node="${comment.anchor_id}" title="${escapeHtml(comment.author)}: ${escapeHtml(comment.body)}">${(collaboration.comments ?? []).filter((item) => item.anchor_id === comment.anchor_id).length}</button>`;
+    const comments = commentThreads().map((thread) => {
+      const anchor = commentAnchor(thread, diagram.elements);
+      if (!anchor) return "";
+      runtimeStyles.set(`comment-pin-${thread.id}`, `[data-comment-thread="${runtimeStyles.escape(thread.id)}"]`, { left: `${anchor.x}px`, top: `${anchor.y}px`, "--comment-pin-scale": `${1 / zoom}` });
+      return CommentPin({ thread });
     });
-    return `${selections.join("")}${cursors.join("")}${comments.join("")}`;
+    const draftPin = commentDraft ? (() => {
+      runtimeStyles.set("comment-draft-pin", "[data-comment-draft-pin]", { left: `${commentDraft.anchor.x}px`, top: `${commentDraft.anchor.y}px`, "--comment-pin-scale": `${1 / zoom}` });
+      return `<span class="comment-pin comment-draft-pin" data-comment-draft-pin aria-hidden="true">+</span>`;
+    })() : "";
+    return `${selections.join("")}${cursors.join("")}${comments.join("")}${draftPin}`;
+  }
+
+  function renderCommentUi() {
+    const thread = selectedCommentThread();
+    const threadMarkup = thread ? CommentThread({ thread, reply: replyDraft, editing: editingComment, error: commentActionError }) : "";
+    const composer = commentDraft ? `<div class="comment-new-surface">${CommentComposer({ body: commentDraft.body, error: commentDraft.error, loading: commentDraft.loading, mode: "new" })}</div>` : "";
+    return `${threadMarkup}${composer}`;
   }
 
   function pageFrame() {
@@ -519,7 +692,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     // the user is typing. Replacing the canvas DOM here would discard the
     // textarea, move the caret, and make typing feel delayed. Those visual
     // updates are safely picked up by the commit render on blur.
-    if (editingNode && element.querySelector("[data-node-editor]")) return;
+    const activeToolbarSelect = document.activeElement?.tagName === "SELECT" && document.activeElement.closest?.(".relationship-toolbar,.format-toolbar,.canvas-toolbar");
+    const activeCommentUi = commentDraft || selectedCommentThreadId || editingComment;
+    if (activeToolbarSelect || (editingNode && element.querySelector("[data-node-editor]")) || (activeCommentUi && element.querySelector(".comment-composer:focus-within") && document.activeElement?.closest?.(".comment-composer"))) return;
     const diagram = state.diagram;
     if (!diagram) return;
     runtimeStyles.clear();
@@ -543,11 +718,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" aria-label="Reset zoom to 100%" class="zoom-level ${zoom === 1 ? "active" : ""}" ${zoom === 1 ? "disabled" : ""}>${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
       <button id="fit-diagram" title="Fit diagram" aria-label="Fit diagram in canvas">Fit</button><button id="fit-selection" title="Fit selection" aria-label="Fit selected elements in canvas" ${selectedIds().length ? "" : "disabled"}>Fit sel</button>
       <button id="select-all" class="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length ? "active" : ""}" title="Select all elements" aria-label="Select all elements" aria-pressed="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length}" ${diagram.elements.length ? "" : "disabled"}>Select all</button>
+      <button id="comment-tool" class="${state.selectedTool?.type === "comment" ? "active" : ""}" title="Place a comment on an element or the canvas" aria-label="Comment tool" aria-pressed="${state.selectedTool?.type === "comment"}" ${commentToolCanWrite(collaboration) ? "" : "disabled"}>Comment</button>
+      ${collaboration.loading ? `<span class="comment-sync-status" role="status">Loading comments…</span>` : ""}
+      ${collaboration.error ? `<button id="comment-retry-sync" class="comment-sync-error" title="${escapeHtml(collaboration.error)}">Retry comments</button>` : ""}
+      ${state.selectedTool?.type === "comment" && collaboration.online && !commentThreads().length ? `<span class="comment-sync-status">No comments yet · click the canvas</span>` : ""}
       <select id="grid-size" title="Grid size" aria-label="Canvas grid size">${[0, 10, 20, 40, 80].map((size) => `<option value="${size}" ${gridSize === size ? "selected" : ""}>${size ? `${size}px grid` : "Grid off"}</option>`).join("")}</select>
       <button id="keyboard-help" class="${shortcutHelpOpen ? "active" : ""}" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-controls="keyboard-help-menu" aria-expanded="${shortcutHelpOpen}" aria-pressed="${shortcutHelpOpen}">?</button>
     </div>${paletteHover ? `<div class="palette-canvas-preview" aria-live="polite"><div class="palette-preview-name">${escapeHtml(paletteHover.label)}</div><div class="palette-preview-symbol">${paletteHover.preview}</div></div>` : ""}
       ${pointerDrag ? `<div class="canvas-drag-ghost"><span>${pointerDrag.preview}</span><strong>${escapeHtml(pointerDrag.label)}</strong></div>` : ""}</div>
-    <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"}">
+    <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"} ${state.selectedTool?.type === "comment" ? "comment-tool-active" : ""}">
       <div id="canvas-plane">
         ${renderRelationships(diagram)}
         ${renderAiGhosts(diagram)}
@@ -565,7 +744,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         }).join("")}
         ${gesture?.type === "marquee" ? `<div class="selection-marquee"></div>` : ""}
       </div>
-    </div>${renderMinimap(diagram, hostRect)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram, hostRect)}${renderShortcutHelp()}${renderPrintPreview(diagram)}`;
+    </div>${renderMinimap(diagram, hostRect)}${renderFormattingToolbar(diagram)}${renderRelationshipToolbar()}${renderContextMenu()}${renderSearchOverlay(diagram, hostRect)}${renderShortcutHelp()}${renderPrintPreview(diagram)}${renderCommentUi()}`;
     element.scrollLeft = scroll.left; element.scrollTop = scroll.top;
     runtimeStyles.commit();
     bindRenderedEvents();
@@ -599,6 +778,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (zoomIn) zoomIn.disabled = zoom >= ZOOM.maximum;
     element.querySelectorAll(".route-handle").forEach((handle) => handle.setAttribute("r", String(7 / zoom)));
     positionFormattingToolbar();
+    positionCommentSurfaces();
     syncMinimapViewport();
     runtimeStyles.commit();
     scheduleRender();
@@ -642,6 +822,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelector("#fit-selection").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram, selectedIds())));
     element.querySelector("#select-all").addEventListener("click", () => setSelection(state.diagram.elements.map((node) => node.id)));
     element.querySelector("#keyboard-help").addEventListener("click", () => setShortcutHelpOpen(!shortcutHelpOpen));
+    element.querySelector("#comment-tool")?.addEventListener("click", () => {
+      if (!commentToolCanWrite(collaboration)) return;
+      if (state.selectedTool?.type === "comment") closeCommentUi();
+      else { closeCommentUi({ leaveTool: true }); state.selectedTool = { type: "comment", kind: null, label: "Comment" }; setSelection([]); render(); }
+    });
+    element.querySelector("#comment-retry-sync")?.addEventListener("click", () => bus.emit("collaboration:retry"));
     element.querySelector("#grid-size").addEventListener("change", (event) => setCanvasMetadata({ gridSize: Number(event.target.value), showGrid: Number(event.target.value) > 0 }));
     const searchInput = element.querySelector("#diagram-search");
     const minimap = element.querySelector("[data-minimap-plane]");
@@ -695,6 +881,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-node]").forEach((nodeElement) => {
       nodeElement.addEventListener("pointerdown", (event) => {
         if (event.target.closest(".node-inline-editor")) return;
+        if (state.selectedTool?.type === "comment" && event.button === 0 && !commentDraft) {
+          event.preventDefault(); event.stopPropagation();
+          const node = state.diagram.elements.find((item) => item.id === nodeElement.dataset.node);
+          if (node) beginComment("element", node.id, { x: node.x + node.width - 8, y: node.y - 8 });
+          return;
+        }
+        if (commentWriting()) { event.preventDefault(); event.stopPropagation(); return; }
         if (editingNode) {
           // Node pointer handlers stop propagation, so the canvas-level editor
           // commit handler never sees a click on another element. Commit here
@@ -718,8 +911,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         }
         startNodeGesture(event, nodeElement.dataset.node);
       });
-      nodeElement.addEventListener("dblclick", (event) => beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection));
+      nodeElement.addEventListener("dblclick", (event) => { if (state.selectedTool?.type !== "comment" && !commentWriting()) beginNodeEditing(event, nodeElement.dataset.node, event.target.closest("[data-edit-section]")?.dataset.editSection); });
       nodeElement.addEventListener("click", (event) => {
+        if (state.selectedTool?.type === "comment" || commentWriting()) return;
         const section = event.target.closest("[data-edit-section]")?.dataset.editSection;
         if (section && !event.shiftKey && !nodeElement.classList.contains("locked")) beginNodeEditing(event, nodeElement.dataset.node, section);
       });
@@ -776,6 +970,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) relationship[input.dataset.relationshipText] = input.value.trim();
     })));
     element.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(button.dataset.command)));
+    bindCommentEvents();
   }
 
   function setCanvasMetadata(changes) {
@@ -871,7 +1066,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function startSelectionGesture(event) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || commentWriting()) return;
     event.preventDefault(); event.stopPropagation(); contextMenu = null; relationshipToolbar = null;
     const movableIds = selectedIds().filter((itemId) => !state.diagram.elements.find((node) => node.id === itemId)?.locked);
     if (!movableIds.length) return;
@@ -879,7 +1074,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   function startNodeGesture(event, nodeId) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || commentWriting()) return;
     event.preventDefault(); event.stopPropagation(); contextMenu = null; relationshipToolbar = null;
     const clickedIds = expandGroupedSelection(state.diagram.elements, [nodeId]);
     let nextSelection;
@@ -1026,9 +1221,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (command === "comment") {
       const anchorId = selectedIds()[0];
       if (!anchorId) return;
-      const body = prompt("Comment on selected element");
-      if (body?.trim()) bus.emit("comment:create", { diagram_id: state.diagram.id, anchor_type: "element", anchor_id: anchorId, body: body.trim() });
-      render();
+      const node = state.diagram.elements.find((item) => item.id === anchorId);
+      if (node) beginComment("element", node.id, { x: node.x + node.width - 8, y: node.y - 8 });
       return;
     }
     if (command?.startsWith("align-")) { mutate((next) => alignElements(next.elements, selectedIds(), command.replace("align-", ""))); return; }
@@ -1053,6 +1247,14 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   function deleteSelection() { if (selectedIds().length) executeCommand("delete"); else deleteSelectedRelationship(); }
 
   element.addEventListener("pointerdown", (event) => {
+    if (event.target.closest?.(".comment-thread,.comment-new-surface,.comment-pin")) return;
+    if (commentWriting()) { event.preventDefault(); return; }
+    if (state.selectedTool?.type === "comment" && event.button === 0 && !event.target.closest(".canvas-toolbar,.canvas-minimap")) {
+      event.preventDefault(); event.stopPropagation();
+      const anchor = pointOnCanvas(event);
+      beginComment("canvas", "", anchor);
+      return;
+    }
     const directColorInput = event.target.closest?.("input[type='color'][data-color-input]");
     if (directColorInput && event.button === 0) {
       // Open while the trusted pointer event is active. This also keeps the
@@ -1149,6 +1351,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       viewportFrame = null;
       state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
       positionFormattingToolbar();
+      positionCommentSurfaces();
       syncMinimapViewport();
       runtimeStyles.commit();
     });
@@ -1157,6 +1360,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!event.target.closest("[data-node],[data-rel],.relationship-toolbar")) { event.preventDefault(); contextMenu = null; relationshipToolbar = null; render(); }
   }, { signal: lifecycle.signal });
   window.addEventListener("pointerdown", (event) => {
+    if ((selectedCommentThreadId || commentDraft) && !event.target.closest?.(".comment-thread,.comment-new-surface,.comment-pin,#comment-tool")) {
+      const blockCanvasInteraction = commentWriting();
+      if (blockCanvasInteraction) { event.preventDefault(); event.stopPropagation(); }
+      closeCommentUi();
+      return;
+    }
     if (!shortcutHelpOpen || event.target.closest?.("#keyboard-help,.shortcut-overlay")) return;
     // Capture dismissal before canvas pointer handlers can replace the clicked DOM during a render.
     setShortcutHelpOpen(false);
@@ -1178,7 +1387,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }, { signal: lifecycle.signal });
   element.addEventListener("dragleave", (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove("drag-target-active"); }, { signal: lifecycle.signal });
   function placePaletteElement(kind, clientX, clientY, variant = "full", textPreset = null, label = "") {
-    if (!elementKinds.includes(kind) || !state.diagram) return false;
+    if (!elementKinds.includes(kind) || !state.diagram || commentWriting()) return false;
     const rect = element.getBoundingClientRect();
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
     const point = pointOnCanvas({ clientX, clientY });
@@ -1323,6 +1532,9 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       setShortcutHelpOpen(false);
       return;
     }
+    if (event.key === "Escape" && (selectedCommentThreadId || commentDraft || state.selectedTool?.type === "comment")) {
+      event.preventDefault(); closeCommentUi(); return;
+    }
     const activeElement = document.activeElement;
     const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement?.tagName)
       || activeElement?.isContentEditable
@@ -1360,6 +1572,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   element.addEventListener("canvas:resize", () => {
     const hostRect = element.getBoundingClientRect();
     runtimeStyles.set("minimap-position", ".canvas-minimap", { right: `${Math.max(12, window.innerWidth - hostRect.right + 18)}px`, bottom: `${Math.max(12, window.innerHeight - hostRect.bottom + 18)}px` });
+    positionCommentSurfaces();
     syncMinimapViewport();
     runtimeStyles.commit();
     if (viewportResizeFrame !== null) return;
@@ -1399,6 +1612,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     scheduleRender();
   }));
   subscriptions.push(bus.on("palette:pointerdrop", ({ type, kind, variant, label, textPreset, crossDiagram, clientX, clientY }) => {
+    if (commentWriting()) return;
     const rect = element.getBoundingClientRect();
     const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
     const allowed = isPaletteItemAllowed(state.diagram?.type, type, kind) || (crossDiagram && type === "node");
@@ -1419,8 +1633,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const relationship = state.diagram?.relationships.find((item) => (item.model_relationship_id ?? item.id) === relationshipId);
     if (relationship) setSelection([], relationship.id);
   }));
-  subscriptions.push(bus.on("collaboration:changed", (next) => { collaboration = next ?? { presence: [], comments: [] }; render(); }));
+  subscriptions.push(bus.on("collaboration:changed", (next) => {
+    collaboration = next ?? { presence: [], comments: [] };
+    if (selectedCommentThreadId && !commentThreads().some((thread) => thread.id === selectedCommentThreadId)) selectedCommentThreadId = null;
+    const linkedThread = window.location.hash.match(/^#comment-(.+)$/)?.[1];
+    if (!selectedCommentThreadId && linkedThread && commentThreads().some((thread) => thread.id === linkedThread)) selectedCommentThreadId = linkedThread;
+    if (!document.activeElement?.closest?.(".comment-composer")) render();
+  }));
   subscriptions.push(bus.on("ai:preview", (next) => { aiPreview = next; scheduleRender(); }));
+  window.addEventListener("resize", () => { positionCommentSurfaces(); runtimeStyles.commit(); }, { signal: lifecycle.signal });
   render();
   element.scrollLeft = state.canvasViewport?.scrollLeft ?? 0;
   element.scrollTop = state.canvasViewport?.scrollTop ?? 0;

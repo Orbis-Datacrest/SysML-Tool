@@ -308,26 +308,55 @@ function activePresence(tenantId, projectId, diagramId, currentUserId = "") {
   }));
 }
 
-function commentsForDiagram(tenantId, projectId, diagramId) {
-  return db.prepare(`
+function commentsForDiagram(tenantId, projectId, diagramId, currentUserId = "", permissions = []) {
+  const rows = db.prepare(`
     SELECT c.*, COALESCE(u.email, c.created_by) AS author
     FROM collaboration_comments c
     LEFT JOIN users u ON u.id = c.created_by
     WHERE c.tenant_id = ? AND c.project_id = ? AND c.diagram_id = ?
     ORDER BY c.created_at ASC
-  `).all(tenantId, projectId, diagramId).map((item) => ({
-    id: item.id,
-    anchor_type: item.anchor_type,
-    anchor_id: item.anchor_id,
-    parent_id: item.parent_id,
-    body: item.body,
-    mentions: json(item.mentions, []),
-    status: item.status,
-    author: item.author,
-    created_by: item.created_by,
-    created_at: item.created_at,
-    updated_at: item.updated_at
-  }));
+  `).all(tenantId, projectId, diagramId);
+  const byId = new Map(rows.map((item) => [item.id, item]));
+  const rootRows = new Map(rows.filter((item) => !item.parent_id).map((item) => [item.id, item]));
+  const latestByThread = new Map();
+  for (const item of rows) {
+    const threadId = item.parent_id && byId.has(item.parent_id) ? (byId.get(item.parent_id).parent_id || item.parent_id) : item.id;
+    const current = latestByThread.get(threadId);
+    if (!current || current.updated_at < item.updated_at) latestByThread.set(threadId, item);
+  }
+  const reads = currentUserId ? new Map(db.prepare("SELECT thread_id, read_at FROM collaboration_comment_reads WHERE tenant_id = ? AND project_id = ? AND user_id = ?").all(tenantId, projectId, currentUserId).map((item) => [item.thread_id, item.read_at])) : new Map();
+  return rows.map((item) => {
+    const threadId = item.parent_id && byId.has(item.parent_id) ? (byId.get(item.parent_id).parent_id || item.parent_id) : item.id;
+    const isAuthor = Boolean(currentUserId && item.created_by === currentUserId);
+    const administer = permissions.includes("admin");
+    const root = rootRows.get(threadId) ?? item;
+    const resolve = !item.parent_id && item.status !== "deleted" && (isAuthor || permissions.includes("edit") || administer);
+    return {
+      id: item.id, thread_id: threadId, diagram_id: item.diagram_id, anchor_type: item.anchor_type, anchor_id: item.anchor_id,
+      anchor_x: item.anchor_x, anchor_y: item.anchor_y, parent_id: item.parent_id,
+      body: item.status === "deleted" ? "Comment deleted" : item.body,
+      mentions: json(item.mentions, []), status: item.status, author: item.author,
+      created_by: item.created_by, created_at: item.created_at, updated_at: item.updated_at,
+      edited_at: item.edited_at, deleted_at: item.deleted_at,
+      unread: currentUserId ? !reads.get(threadId) || reads.get(threadId) < latestByThread.get(threadId).updated_at : false,
+      permissions: {
+        reply: permissions.includes("comment") && root.status === "open",
+        edit: item.status !== "deleted" && isAuthor,
+        delete: item.status !== "deleted" && (isAuthor || administer),
+        resolve,
+        reopen: resolve
+      }
+    };
+  });
+}
+
+function extractMentions(value) {
+  return [...new Set([...String(value ?? "").matchAll(/@([\w.+-]+@[\w.-]+|\w+)/g)].map((match) => match[1].toLowerCase()))].slice(0, 25);
+}
+
+function markCommentThreadRead({ tenantId, projectId, threadId, userId, readAt = now() }) {
+  db.prepare(`INSERT INTO collaboration_comment_reads (tenant_id, project_id, thread_id, user_id, read_at)
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, user_id) DO UPDATE SET read_at = excluded.read_at`).run(tenantId, projectId, threadId, userId, readAt);
 }
 
 function insertDiagram(diagram) {
@@ -1091,7 +1120,7 @@ async function api(req, res, urlOrPath) {
       role: context.role,
       permissions: context.permissions,
       presence: activePresence(context.tenantId, context.project.id, diagramId, context.user?.id ?? `guest_${context.tenantId}`),
-      comments: commentsForDiagram(context.tenantId, context.project.id, diagramId),
+      comments: commentsForDiagram(context.tenantId, context.project.id, diagramId, context.user?.id ?? "", context.permissions),
       notifications: db.prepare("SELECT * FROM notifications WHERE tenant_id = ? AND project_id = ? AND (user_id IS NULL OR user_id = ?) ORDER BY created_at DESC LIMIT 20").all(context.tenantId, context.project.id, context.user?.id ?? "")
     });
   }
@@ -1118,19 +1147,72 @@ async function api(req, res, urlOrPath) {
     const context = requireProjectPermission(req, res, commentsMatch[1], "comment");
     if (!context) return;
     const input = await body(req);
-    const mentions = [...String(input.body ?? "").matchAll(/@([\w.+-]+@[\w.-]+|\w+)/g)].map((match) => match[1]);
-    const comment = { id: createId("comment"), tenant_id: context.tenantId, project_id: context.project.id, diagram_id: input.diagram_id, anchor_type: input.anchor_type || "element", anchor_id: input.anchor_id || "", parent_id: input.parent_id ?? null, body: String(input.body ?? "").trim(), mentions, status: "open", created_by: context.user?.id ?? "local-user", created_at: now(), updated_at: now() };
-    if (!comment.diagram_id || !comment.anchor_id || !comment.body) return send(res, 422, { error: "diagram_id, anchor_id, and body are required" });
+    const commentBody = String(input.body ?? "").trim();
+    if (!commentBody || commentBody.length > 5000) return send(res, 422, { error: "Comment text is required and must be 5,000 characters or fewer." });
+    const mentions = extractMentions(commentBody);
+    let parent = null;
+    if (input.parent_id) {
+      parent = db.prepare("SELECT * FROM collaboration_comments WHERE id = ? AND tenant_id = ? AND project_id = ?").get(input.parent_id, context.tenantId, context.project.id);
+      if (!parent || parent.status !== "open") return send(res, 409, { error: "This comment thread is unavailable or resolved." });
+      if (parent.parent_id) parent = db.prepare("SELECT * FROM collaboration_comments WHERE id = ? AND tenant_id = ? AND project_id = ?").get(parent.parent_id, context.tenantId, context.project.id);
+      if (!parent || parent.status !== "open") return send(res, 409, { error: "This comment thread is unavailable or resolved." });
+    }
+    const anchorType = parent?.anchor_type ?? (input.anchor_type === "canvas" ? "canvas" : "element");
+    const anchorX = parent?.anchor_x ?? Number(input.anchor_x);
+    const anchorY = parent?.anchor_y ?? Number(input.anchor_y);
+    const anchorId = parent?.anchor_id ?? String(input.anchor_id || (anchorType === "canvas" && Number.isFinite(anchorX) && Number.isFinite(anchorY) ? `canvas:${Math.round(anchorX)}:${Math.round(anchorY)}` : ""));
+    const comment = { id: createId("comment"), tenant_id: context.tenantId, project_id: context.project.id, diagram_id: parent?.diagram_id ?? input.diagram_id, anchor_type: anchorType, anchor_id: anchorId, anchor_x: Number.isFinite(anchorX) ? Math.max(0, anchorX) : null, anchor_y: Number.isFinite(anchorY) ? Math.max(0, anchorY) : null, parent_id: parent?.id ?? null, body: commentBody, mentions, status: "open", created_by: context.user?.id ?? "local-user", created_at: now(), updated_at: now() };
+    if (!comment.diagram_id || !comment.anchor_id || (comment.anchor_type === "canvas" && (comment.anchor_x === null || comment.anchor_y === null))) return send(res, 422, { error: "A valid diagram and element or canvas anchor are required." });
+    const diagram = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND project_id = ? AND tenant_id = ?").get(comment.diagram_id, context.project.id, context.tenantId));
+    if (!diagram) return send(res, 404, { error: "Diagram not found" });
+    if (comment.anchor_type === "element" && !diagram.elements.some((item) => item.id === comment.anchor_id)) return send(res, 422, { error: "The comment element no longer exists." });
     db.prepare(`
-      INSERT INTO collaboration_comments (id, tenant_id, project_id, diagram_id, anchor_type, anchor_id, parent_id, body, mentions, status, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(comment.id, comment.tenant_id, comment.project_id, comment.diagram_id, comment.anchor_type, comment.anchor_id, comment.parent_id, comment.body, JSON.stringify(comment.mentions), comment.status, comment.created_by, comment.created_at, comment.updated_at);
+      INSERT INTO collaboration_comments (id, tenant_id, project_id, diagram_id, anchor_type, anchor_id, anchor_x, anchor_y, parent_id, body, mentions, status, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(comment.id, comment.tenant_id, comment.project_id, comment.diagram_id, comment.anchor_type, comment.anchor_id, comment.anchor_x, comment.anchor_y, comment.parent_id, comment.body, JSON.stringify(comment.mentions), comment.status, comment.created_by, comment.created_at, comment.updated_at);
+    markCommentThreadRead({ tenantId: context.tenantId, projectId: context.project.id, threadId: parent?.id ?? comment.id, userId: comment.created_by, readAt: comment.updated_at });
     for (const mention of mentions) {
       const target = getUserByEmail(mention.includes("@") ? mention : `${mention}@local.invalid`);
       db.prepare("INSERT INTO notifications (id, tenant_id, project_id, user_id, type, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(createId("notification"), context.tenantId, context.project.id, target?.id ?? null, "mention", `${context.user?.email ?? "A collaborator"} mentioned @${mention}`, now());
     }
-    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: "comment.create", resourceType: "comment", resourceId: comment.id, description: `Commented on ${comment.anchor_type} ${comment.anchor_id}` });
-    return send(res, 201, { comments: commentsForDiagram(context.tenantId, context.project.id, comment.diagram_id) });
+    recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: comment.parent_id ? "comment.reply" : "comment.create", resourceType: "comment", resourceId: comment.id, description: `${comment.parent_id ? "Replied" : "Commented"} on ${comment.anchor_type} ${comment.anchor_id}` });
+    return send(res, 201, { comment: { id: comment.id, thread_id: parent?.id ?? comment.id }, comments: commentsForDiagram(context.tenantId, context.project.id, comment.diagram_id, context.user?.id ?? "", context.permissions) });
+  }
+
+  const commentMatch = pathname.match(/^\/api\/projects\/([^/]+)\/comments\/([^/]+)$/);
+  if (commentMatch && req.method === "PATCH") {
+    const context = requireProjectPermission(req, res, commentMatch[1], "read");
+    if (!context) return;
+    const input = await body(req);
+    assertBodyKeys(input, ["action", "body"]);
+    const comment = db.prepare("SELECT * FROM collaboration_comments WHERE id = ? AND tenant_id = ? AND project_id = ?").get(commentMatch[2], context.tenantId, context.project.id);
+    if (!comment) return send(res, 404, { error: "Comment not found" });
+    const rootId = comment.parent_id || comment.id;
+    const root = comment.parent_id ? db.prepare("SELECT * FROM collaboration_comments WHERE id = ? AND tenant_id = ? AND project_id = ?").get(rootId, context.tenantId, context.project.id) : comment;
+    if (!root) return send(res, 409, { error: "The parent comment thread no longer exists." });
+    const isAuthor = comment.created_by === context.user?.id;
+    const administer = context.permissions.includes("admin");
+    const canResolve = !comment.parent_id && (isAuthor || context.permissions.includes("edit") || administer);
+    const action = input.action;
+    if (!["mark-read", "mark-unread"].includes(action) && !context.permissions.includes("comment")) return send(res, 403, { error: "Comment permission is required." });
+    if (action === "mark-read") markCommentThreadRead({ tenantId: context.tenantId, projectId: context.project.id, threadId: rootId, userId: context.user.id });
+    else if (action === "mark-unread") db.prepare("DELETE FROM collaboration_comment_reads WHERE tenant_id = ? AND project_id = ? AND thread_id = ? AND user_id = ?").run(context.tenantId, context.project.id, rootId, context.user.id);
+    else if (action === "edit") {
+      if (!isAuthor || comment.status === "deleted") return send(res, 403, { error: "You may only edit your own comments." });
+      const nextBody = String(input.body ?? "").trim();
+      if (!nextBody || nextBody.length > 5000) return send(res, 422, { error: "Comment text is required and must be 5,000 characters or fewer." });
+      db.prepare("UPDATE collaboration_comments SET body = ?, mentions = ?, edited_at = ?, updated_at = ? WHERE id = ?").run(nextBody, JSON.stringify(extractMentions(nextBody)), now(), now(), comment.id);
+    } else if (action === "delete") {
+      if ((!isAuthor && !administer) || comment.status === "deleted") return send(res, 403, { error: "You may only delete your own comments." });
+      const timestamp = now();
+      if (!comment.parent_id) db.prepare("UPDATE collaboration_comments SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ? OR parent_id = ?").run(timestamp, timestamp, comment.id, comment.id);
+      else db.prepare("UPDATE collaboration_comments SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?").run(timestamp, timestamp, comment.id);
+    } else if (action === "resolve" || action === "reopen") {
+      if (!canResolve || root.status === "deleted") return send(res, 403, { error: "You do not have permission to change this thread." });
+      db.prepare("UPDATE collaboration_comments SET status = ?, updated_at = ? WHERE id = ?").run(action === "resolve" ? "resolved" : "open", now(), rootId);
+    } else return send(res, 422, { error: "Unsupported comment action." });
+    if (!["mark-read", "mark-unread"].includes(action)) recordAudit({ tenantId: context.tenantId, projectId: context.project.id, actorId: context.user?.id, action: `comment.${action}`, resourceType: "comment", resourceId: comment.id, description: `${action} comment ${comment.id}` });
+    return send(res, 200, { comments: commentsForDiagram(context.tenantId, context.project.id, comment.diagram_id, context.user?.id ?? "", context.permissions) });
   }
 
   // const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);

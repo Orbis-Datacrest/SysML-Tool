@@ -47,7 +47,8 @@ export function createApiClient({ state, bus, fetchImpl = fetch }) {
     approveReview: (projectId, reviewId, input) => api.request(`/api/projects/${projectId}/reviews/${reviewId}/approval`, { method: "POST", body: JSON.stringify(input) }),
     collaborationState: (projectId, diagramId) => api.request(`/api/projects/${projectId}/collaboration?diagram_id=${encodeURIComponent(diagramId)}`),
     publishPresence: (projectId, input) => api.request(`/api/projects/${projectId}/collaboration`, { method: "POST", body: JSON.stringify(input) }),
-    createComment: (projectId, input) => api.request(`/api/projects/${projectId}/comments`, { method: "POST", body: JSON.stringify(input) })
+    createComment: (projectId, input) => api.request(`/api/projects/${projectId}/comments`, { method: "POST", body: JSON.stringify(input) }),
+    updateComment: (projectId, commentId, input) => api.request(`/api/projects/${projectId}/comments/${encodeURIComponent(commentId)}`, { method: "PATCH", body: JSON.stringify(input) })
   };
   return api;
 }

@@ -396,7 +396,9 @@ bus.on("dashboard:open", () => {
 });
 bus.on("selection:changed", (selection) => synchronization.publishPresence(null, selection));
 bus.on("canvas:pointer", (cursor) => synchronization.publishPresence(cursor, state.selectedElementIds ?? []));
-bus.on("comment:create", (comment) => synchronization.addComment(comment).catch((error) => bus.emit("toast", error.message)));
+bus.on("comment:create", ({ input, onSuccess, onError } = {}) => synchronization.addComment(input).then((result) => onSuccess?.(result)).catch((error) => { onError?.(error); bus.emit("toast", error.message); }));
+bus.on("comment:update", ({ commentId, input, onSuccess, onError } = {}) => synchronization.updateComment(commentId, input).then((result) => onSuccess?.(result)).catch((error) => { onError?.(error); bus.emit("toast", error.message); }));
+bus.on("collaboration:retry", () => synchronization.refresh());
 window.addEventListener("popstate", async (event) => {
   if (event.state?.view === "editor" && event.state.projectId) {
     if (state.user) await openProject(event.state.projectId, { updateHistory: false });

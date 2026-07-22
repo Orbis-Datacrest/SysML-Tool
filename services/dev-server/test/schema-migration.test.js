@@ -48,3 +48,19 @@ test("AI proposal migration upgrades an existing legacy table idempotently", () 
   assert.deepEqual(JSON.parse(row.materialized_patch).operations, []);
   assert.deepEqual(JSON.parse(row.applied_operation_ids), []);
 });
+
+test("comment migration preserves old rows and adds canvas anchors, editing, and unread storage", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE collaboration_comments (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, diagram_id TEXT NOT NULL,
+    anchor_type TEXT NOT NULL, anchor_id TEXT NOT NULL, parent_id TEXT, body TEXT NOT NULL,
+    mentions TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'open', created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  ); INSERT INTO collaboration_comments VALUES ('old', 't', 'p', 'd', 'element', 'e', NULL, 'Legacy comment', '[]', 'open', 'u', 'now', 'now');`);
+  migrateSchema(db);
+  migrateSchema(db);
+  const columns = new Set(db.prepare("PRAGMA table_info(collaboration_comments)").all().map((column) => column.name));
+  for (const name of ["anchor_x", "anchor_y", "edited_at", "deleted_at"]) assert.ok(columns.has(name));
+  assert.equal(db.prepare("SELECT body FROM collaboration_comments WHERE id = 'old'").get().body, "Legacy comment");
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'collaboration_comment_reads'").get());
+});

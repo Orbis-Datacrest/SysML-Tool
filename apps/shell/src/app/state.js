@@ -20,7 +20,7 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
     auditHistory: [],
     reviews: [],
     versionCompare: { from: "", to: "", diff: null },
-    collaboration: { role: "Owner", permissions: [], presence: [], comments: [], notifications: [], online: false },
+    collaboration: { role: "Owner", permissions: [], presence: [], comments: [], notifications: [], online: false, loading: true, error: "" },
     settings: { theme: normalizeTheme(readStorage("sysml.theme")) },
     project: null,
     diagram: null,
