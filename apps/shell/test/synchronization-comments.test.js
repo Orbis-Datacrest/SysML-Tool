@@ -30,3 +30,38 @@ test("unchanged collaboration polls do not rerender the canvas", async () => {
   await service.refresh();
   assert.deepEqual(events, ["collaboration:changed"]);
 });
+
+test("a newer shared diagram replaces a clean local diagram", async () => {
+  const events = [];
+  const remote = { id: "diagram", version: 3, elements: [{ id: "remote" }], relationships: [] };
+  const state = {
+    project: { id: "project" },
+    diagram: { id: "diagram", version: 2, elements: [], relationships: [] },
+    diagrams: [],
+    dirtyTabIds: new Set(),
+    collaboration: { online: false, loading: true, error: "" }
+  };
+  const api = { collaborationState: async () => ({ diagram: remote, role: "Editor", permissions: ["edit"], comments: [], presence: [] }) };
+  const service = createSynchronizationService({ api, state, bus: { emit: (name) => events.push(name) } });
+  await service.refresh();
+  assert.equal(state.diagram.version, 3);
+  assert.equal(state.diagram.elements[0].id, "remote");
+  assert.deepEqual(events, ["diagram:remote", "diagram:changed", "collaboration:changed"]);
+});
+
+test("a newer shared diagram does not overwrite unsaved local work", async () => {
+  const events = [];
+  const state = {
+    project: { id: "project" },
+    diagram: { id: "diagram", version: 2, elements: [{ id: "local" }], relationships: [] },
+    diagrams: [],
+    dirtyTabIds: new Set(["diagram"]),
+    collaboration: { online: false, loading: true, error: "" }
+  };
+  const api = { collaborationState: async () => ({ diagram: { id: "diagram", version: 3, elements: [], relationships: [] }, comments: [], presence: [] }) };
+  const service = createSynchronizationService({ api, state, bus: { emit: (name) => events.push(name) } });
+  await service.refresh();
+  assert.equal(state.diagram.elements[0].id, "local");
+  assert.equal(state.collaboration.conflict.remoteVersion, 3);
+  assert.deepEqual(events, ["collaboration:conflict", "collaboration:changed"]);
+});

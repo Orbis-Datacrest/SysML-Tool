@@ -8,7 +8,29 @@ export function createSynchronizationService({ api, state, bus, pollInterval = 1
     const signature = JSON.stringify(payload);
     if (signature === lastPayloadSignature && state.collaboration.online && !state.collaboration.loading && !state.collaboration.error) return;
     lastPayloadSignature = signature;
-    state.collaboration = { ...state.collaboration, ...payload, online: true, loading: false, error: "" };
+    const { diagram: remoteDiagram, ...collaborationPayload } = payload;
+    let conflict = state.collaboration.conflict ?? null;
+    if (remoteDiagram?.id === state.diagram?.id && Number(remoteDiagram.version) > Number(state.diagram.version)) {
+      if (state.dirtyTabIds?.has(remoteDiagram.id)) {
+        const isNewConflict = Number(conflict?.remoteVersion) !== Number(remoteDiagram.version);
+        conflict = {
+          diagramId: remoteDiagram.id,
+          localVersion: state.diagram.version,
+          remoteVersion: remoteDiagram.version,
+          message: "A collaborator saved a newer version while you have unsaved changes."
+        };
+        if (isNewConflict) bus.emit("collaboration:conflict", conflict);
+      } else {
+        state.diagram = remoteDiagram;
+        state.diagrams = (state.diagrams ?? []).map((item) => item.id === remoteDiagram.id ? remoteDiagram : item);
+        conflict = null;
+        bus.emit("diagram:remote", remoteDiagram);
+        bus.emit("diagram:changed", remoteDiagram);
+      }
+    } else if (remoteDiagram?.id === state.diagram?.id && Number(remoteDiagram.version) === Number(state.diagram.version)) {
+      conflict = null;
+    }
+    state.collaboration = { ...state.collaboration, ...collaborationPayload, conflict, online: true, loading: false, error: "" };
     bus.emit("collaboration:changed", state.collaboration);
   };
 

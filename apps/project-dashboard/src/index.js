@@ -18,6 +18,7 @@ function escapeHtml(value = "") {
 registerMfe("project-dashboard", (element, { state, api, bus }) => {
   let projects = [];
   let recent = [];
+  let invitations = [];
   let loading = true;
   let error = "";
   let dashboardView = "workspace";
@@ -37,6 +38,7 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
       loading = false;
       projects = [];
       recent = [];
+      invitations = [];
       render();
       return;
     }
@@ -46,6 +48,7 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
       const data = await api.request("/api/projects");
       projects = data.projects ?? [];
       recent = data.recent ?? [];
+      invitations = data.invitations ?? [];
       error = "";
     } catch (caught) {
       error = caught.message;
@@ -74,6 +77,45 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
         </div>
       </article>
     `;
+  }
+
+  function confirmProjectDeletion(project, returnFocus) {
+    if (!project || element.querySelector("#delete-project-dialog")) return;
+    const backdrop = document.createElement("div");
+    backdrop.className = "logout-confirmation-backdrop";
+    backdrop.innerHTML = `<section id="delete-project-dialog" class="logout-confirmation" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description" tabindex="-1">
+      <div class="logout-confirmation-icon" aria-hidden="true">!</div>
+      <div class="logout-confirmation-copy"><h2 id="delete-project-title">Delete project?</h2><p id="delete-project-description">“${escapeHtml(project.name)}” and all of its diagrams will be permanently deleted.</p></div>
+      <div class="logout-confirmation-actions"><button id="cancel-delete-project" type="button">Cancel</button><button id="confirm-delete-project" class="danger" type="button">Delete</button></div>
+    </section>`;
+    element.append(backdrop);
+    const dialog = backdrop.querySelector("#delete-project-dialog");
+    const close = ({ restoreFocus = true } = {}) => {
+      backdrop.remove();
+      if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+    };
+    backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+    backdrop.querySelector("#cancel-delete-project").addEventListener("click", () => close());
+    backdrop.querySelector("#confirm-delete-project").addEventListener("click", async (event) => {
+      const deleteButton = event.currentTarget;
+      deleteButton.disabled = true;
+      try {
+        await api.request(`/api/projects/${project.id}`, { method: "DELETE" });
+        close({ restoreFocus: false });
+        bus.emit("toast", "Project deleted");
+        await load();
+      } catch (caught) {
+        deleteButton.disabled = false;
+        bus.emit("toast", caught.message);
+      }
+    });
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    });
+    dialog.focus();
   }
 
   function render() {
@@ -113,7 +155,7 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
           <section class="dashboard-section dashboard-view-section"><div class="dashboard-section-heading"><div><p class="eyebrow">Saved projects</p><h2>Starred</h2><p>Projects you want to keep close at hand.</p></div></div><div class="project-grid">${projects.filter((project) => starredIds.has(String(project.id))).map(projectCard).join("") || `<div class="dashboard-empty">No starred projects yet. Use the star button on a project card to add one.</div>`}</div></section>
         ` : ""}
         ${state.user && !loading && dashboardView === "activity" ? `
-          <section class="dashboard-section dashboard-view-section"><div class="dashboard-section-heading"><div><p class="eyebrow">Workspace timeline</p><h2>Activity</h2><p>Your latest project opens and model updates.</p></div></div><div class="activity-list">${recent.map((project) => `<button data-open="${project.id}" class="activity-item"><span class="activity-marker">◇</span><span><strong>${escapeHtml(project.name)}</strong><small>Opened ${formatDate(project.last_opened_at)} · ${project.diagram_count ?? 0} diagram${project.diagram_count === 1 ? "" : "s"}</small></span><time>${formatDate(project.last_opened_at)}</time></button>`).join("") || `<div class="dashboard-empty">Activity will appear here after you open or edit a project.</div>`}</div></section>
+          <section class="dashboard-section dashboard-view-section"><div class="dashboard-section-heading"><div><p class="eyebrow">Team collaboration</p><h2>Invitations received</h2><p>Projects that teammates have shared with your registered email address.</p></div></div><div class="activity-list">${invitations.map((invitation) => `<button data-open="${invitation.project_id}" class="activity-item"><span class="activity-marker">✉</span><span><strong>${escapeHtml(invitation.project_name)}</strong><small>${escapeHtml(invitation.invited_by_email ?? "A teammate")} invited you as ${escapeHtml(invitation.role)}${invitation.project_description ? ` · ${escapeHtml(invitation.project_description)}` : ""}</small></span><time>${formatDate(invitation.updated_at ?? invitation.created_at)}</time></button>`).join("") || `<div class="dashboard-empty">You have no project invitations.</div>`}</div></section>
         ` : ""}
       </section>
     `;
@@ -149,13 +191,10 @@ registerMfe("project-dashboard", (element, { state, api, bus }) => {
       });
     });
     element.querySelectorAll("[data-delete]").forEach((button) => {
-      button.addEventListener("click", async (event) => {
+      button.addEventListener("click", (event) => {
         event.stopPropagation();
         const project = projects.find((item) => item.id === button.dataset.delete);
-        if (!confirm(`Delete "${project?.name ?? "this project"}"? This also deletes its diagrams.`)) return;
-        await api.request(`/api/projects/${button.dataset.delete}`, { method: "DELETE" });
-        bus.emit("toast", "Project deleted");
-        await load();
+        confirmProjectDeletion(project, button);
       });
     });
   }

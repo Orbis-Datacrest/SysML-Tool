@@ -136,7 +136,7 @@ function renderShell() {
             <small>Navigate</small>
             <button class="active" type="button" data-dashboard-view="workspace"><span class="dashboard-nav-icon">${dashboardIcons.grid}</span><span>Workspace</span><i></i></button>
             <button type="button" data-dashboard-view="starred"><span class="dashboard-nav-icon">${dashboardIcons.star}</span><span>Starred</span></button>
-            <button type="button" data-dashboard-view="activity"><span class="dashboard-nav-icon">${dashboardIcons.activity}</span><span>Activity</span></button>
+            <button type="button" data-dashboard-view="activity"><span class="dashboard-nav-icon">${dashboardIcons.activity}</span><span>Invitations</span></button>
           </nav>
           <section class="dashboard-pinned"><header><small>Pinned</small><span>1</span></header><button type="button" disabled><span class="dashboard-nav-icon">${dashboardIcons.folder}</span><span>Untitled Project</span></button></section>
           <section id="auth-session" class="dashboard-account"></section>

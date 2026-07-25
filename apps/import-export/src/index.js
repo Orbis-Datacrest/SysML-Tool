@@ -45,6 +45,27 @@ function filename(value) {
   return String(value || "diagram").replace(/[\/:*?"<>|]+/g, "-");
 }
 
+function rebaseImportedDiagram(diagram) {
+  const copy = structuredClone(diagram);
+  const ids = [
+    ...(copy.elements ?? []).map((item) => item.id),
+    ...(copy.relationships ?? []).map((item) => item.id)
+  ];
+  const replacements = new Map(ids.map((oldId) => [oldId, `import_${crypto.randomUUID()}`]));
+  const replaceReferences = (value) => {
+    if (typeof value === "string") return replacements.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(replaceReferences);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceReferences(item)]));
+    }
+    return value;
+  };
+  const rebased = replaceReferences(copy);
+  rebased.elements = (rebased.elements ?? []).map(({ model_element_id: _modelElementId, ...item }) => item);
+  rebased.relationships = (rebased.relationships ?? []).map(({ model_relationship_id: _modelRelationshipId, ...item }) => item);
+  return rebased;
+}
+
 async function pngBlob(diagram, scale = 2) {
   const svg = toSvg(diagram);
   const image = new Image();
@@ -167,7 +188,7 @@ registerMfe("project-export", (element, { state, bus }) => {
   };
 });
 
-registerMfe("project-import", (element, { state, bus, setDiagram }) => {
+registerMfe("project-import", (element, { state, bus, setDiagram, saveCurrentDiagram }) => {
   let busy = false;
   let status = { kind: "", message: "" };
 
@@ -181,6 +202,7 @@ registerMfe("project-import", (element, { state, bus, setDiagram }) => {
     busy = true;
     status = { kind: "progress", message: `Checking ${file.name}…` };
     render();
+    let importApplied = false;
 
     try {
       const extension = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "";
@@ -200,25 +222,36 @@ registerMfe("project-import", (element, { state, bus, setDiagram }) => {
       const previousSelectedTool = structuredClone(state.selectedTool);
       const localIdentity = { id: state.diagram.id, project_id: state.diagram.project_id, tenant_id: state.diagram.tenant_id };
       try {
+        const foreignProject = !imported.diagram.project_id || imported.diagram.project_id !== localIdentity.project_id;
+        const importedDiagram = foreignProject ? rebaseImportedDiagram(imported.diagram) : imported.diagram;
         if (imported.viewport) state.canvasViewport = imported.viewport;
         state.selectedElementIds = [];
         state.selectedRelationshipId = null;
         state.selectedTool = { type: "select", kind: null, label: "" };
-        setDiagram({ ...imported.diagram, ...localIdentity });
+        setDiagram({ ...importedDiagram, ...localIdentity });
+        importApplied = true;
+        // Import is a durability boundary: do not report success while the
+        // normal debounced auto-save can still be cancelled by a page reload.
+        const saved = await saveCurrentDiagram?.({ diagram: state.diagram });
+        if (saveCurrentDiagram && !saved) throw new Error("The imported diagram could not be saved.");
       } catch (error) {
-        state.diagram = previousDiagram;
-        state.canvasViewport = previousViewport;
-        state.history = previousHistory;
-        state.future = previousFuture;
-        state.selectedElementIds = previousElementSelection;
-        state.selectedRelationshipId = previousRelationshipSelection;
-        state.selectedTool = previousSelectedTool;
-        bus.emit("diagram:changed", previousDiagram);
+        if (!importApplied) {
+          state.diagram = previousDiagram;
+          state.canvasViewport = previousViewport;
+          state.history = previousHistory;
+          state.future = previousFuture;
+          state.selectedElementIds = previousElementSelection;
+          state.selectedRelationshipId = previousRelationshipSelection;
+          state.selectedTool = previousSelectedTool;
+          bus.emit("diagram:changed", previousDiagram);
+        }
         throw error;
       }
       status = { kind: "success", message: `Imported ${file.name}: ${imported.diagram.elements.length} elements and ${imported.diagram.relationships.length} relationships.` };
     } catch (error) {
-      status = { kind: "error", message: `Import failed: ${error.message}` };
+      status = importApplied
+        ? { kind: "error", message: `Imported locally, but saving failed: ${error.message} Keep this page open and export a backup before refreshing.` }
+        : { kind: "error", message: `Import failed: ${error.message}` };
     } finally {
       busy = false;
       releaseTransfer("import");

@@ -14,10 +14,10 @@ export const relationshipTypes = [
   ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
 ];
 
-export const defaultNodeStyle = { borderColor: "#26351f", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
+export const defaultNodeStyle = { borderColor: "#ffffff", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
 export const themeNodeStyles = {
-  dark: { borderColor: "#6aaeff", fillColor: "#172033", textColor: "#f4f7fb" },
-  light: { borderColor: "#1d4ed8", fillColor: "#ffffff", textColor: "#111827" }
+  dark: { borderColor: "#ffffff", fillColor: "#172033", textColor: "#f4f7fb" },
+  light: { borderColor: "#ffffff", fillColor: "#ffffff", textColor: "#111827" }
 };
 export const lightTextKinds = new Set(["actor", "initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node", "destruction-occurrence"]);
 export const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };

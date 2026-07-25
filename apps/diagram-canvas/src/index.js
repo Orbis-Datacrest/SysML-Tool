@@ -721,6 +721,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <button id="comment-tool" class="${state.selectedTool?.type === "comment" ? "active" : ""}" title="Place a comment on an element or the canvas" aria-label="Comment tool" aria-pressed="${state.selectedTool?.type === "comment"}" ${commentToolCanWrite(collaboration) ? "" : "disabled"}>Comment</button>
       ${collaboration.loading ? `<span class="comment-sync-status" role="status">Loading comments…</span>` : ""}
       ${collaboration.error ? `<button id="comment-retry-sync" class="comment-sync-error" title="${escapeHtml(collaboration.error)}">Retry comments</button>` : ""}
+      ${collaboration.conflict ? `<span class="comment-sync-error" role="alert" title="${escapeHtml(collaboration.conflict.message)}">Newer team version available · local work preserved</span>` : ""}
       ${state.selectedTool?.type === "comment" && collaboration.online && !commentThreads().length ? `<span class="comment-sync-status">No comments yet · click the canvas</span>` : ""}
       <select id="grid-size" title="Grid size" aria-label="Canvas grid size">${[0, 10, 20, 40, 80].map((size) => `<option value="${size}" ${gridSize === size ? "selected" : ""}>${size ? `${size}px grid` : "Grid off"}</option>`).join("")}</select>
       <button id="keyboard-help" class="${shortcutHelpOpen ? "active" : ""}" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-controls="keyboard-help-menu" aria-expanded="${shortcutHelpOpen}" aria-pressed="${shortcutHelpOpen}">?</button>

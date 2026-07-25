@@ -21,6 +21,7 @@ await mkdir(dataDir, { recursive: true });
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
+let diagramSavepointSequence = 0;
 
 const aiProviders = new AiProviderRegistry().register("local", localProvider).register("ollama", createOllamaProvider({
   endpoint: process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
@@ -176,6 +177,27 @@ function recentProjectsForUser(tenantId, userId) {
     ORDER BY r.opened_at DESC
     LIMIT 8
   `).all(tenantId, userId).map(projectWithStats);
+}
+
+function projectInvitationsForUser(tenantId, email) {
+  if (!email) return [];
+  return db.prepare(`
+    SELECT
+      s.id,
+      s.project_id,
+      p.name AS project_name,
+      p.description AS project_description,
+      s.role,
+      s.created_at,
+      s.updated_at,
+      s.accepted_at,
+      inviter.email AS invited_by_email
+    FROM project_shares s
+    JOIN projects p ON p.id = s.project_id AND p.tenant_id = s.tenant_id
+    LEFT JOIN users inviter ON inviter.id = s.invited_by
+    WHERE s.tenant_id = ? AND lower(s.email) = lower(?)
+    ORDER BY s.updated_at DESC
+  `).all(tenantId, normalizeEmail(email));
 }
 
 function recordProjectOpen(tenantId, userId, projectId) {
@@ -383,23 +405,35 @@ function updateDiagram(diagram) {
   const stored = db.prepare("SELECT elements, relationships FROM diagrams WHERE id = ?").get(diagram.id);
   const previousElements = new Map(json(stored?.elements, []).map((item) => [item.id, item]));
   const previousRelationships = new Map(json(stored?.relationships, []).map((item) => [item.id, item]));
-  db.prepare(`
-    UPDATE diagrams
-    SET tenant_id = ?, project_id = ?, type = ?, name = ?, version = ?, updated_at = ?, metadata = ?, elements = ?, relationships = ?
-    WHERE id = ?
-  `).run(
-    diagram.tenant_id,
-    diagram.project_id,
-    diagram.type,
-    diagram.name,
-    diagram.version,
-    diagram.updated_at,
-    JSON.stringify(diagram.metadata ?? {}),
-    JSON.stringify(diagram.elements ?? []),
-    JSON.stringify(diagram.relationships ?? []),
-    diagram.id
-  );
-  persistDiagramModel(diagram, { previousElements, previousRelationships });
+  // node:sqlite DatabaseSync does not expose better-sqlite3's transaction()
+  // helper. A uniquely named savepoint is atomic both on its own and when this
+  // function is called inside an existing BEGIN/COMMIT transaction.
+  const savepoint = `update_diagram_${++diagramSavepointSequence}`;
+  db.exec(`SAVEPOINT ${savepoint}`);
+  try {
+    db.prepare(`
+      UPDATE diagrams
+      SET tenant_id = ?, project_id = ?, type = ?, name = ?, version = ?, updated_at = ?, metadata = ?, elements = ?, relationships = ?
+      WHERE id = ?
+    `).run(
+      diagram.tenant_id,
+      diagram.project_id,
+      diagram.type,
+      diagram.name,
+      diagram.version,
+      diagram.updated_at,
+      JSON.stringify(diagram.metadata ?? {}),
+      JSON.stringify(diagram.elements ?? []),
+      JSON.stringify(diagram.relationships ?? []),
+      diagram.id
+    );
+    persistDiagramModel(diagram, { previousElements, previousRelationships });
+    db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+  } catch (error) {
+    db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+    throw error;
+  }
 }
 
 function persistDiagramModel(diagram, previous = {}) {
@@ -845,7 +879,8 @@ async function api(req, res, urlOrPath) {
   if (pathname === "/api/projects" && req.method === "GET") {
     return send(res, 200, {
       projects: projectsForTenant(tenantId, user?.id ?? null),
-      recent: recentProjectsForUser(tenantId, user?.id ?? null)
+      recent: recentProjectsForUser(tenantId, user?.id ?? null),
+      invitations: projectInvitationsForUser(tenantId, user?.email)
     });
   }
 
@@ -1116,9 +1151,14 @@ async function api(req, res, urlOrPath) {
     const context = requireProjectPermission(req, res, collaborationMatch[1], "read");
     if (!context) return;
     if (!diagramId) return send(res, 422, { error: "diagram_id is required" });
+    const diagram = diagramFromRow(db.prepare(
+      "SELECT * FROM diagrams WHERE id = ? AND project_id = ? AND tenant_id = ?"
+    ).get(diagramId, context.project.id, context.tenantId));
+    if (!diagram) return send(res, 404, { error: "Diagram not found" });
     return send(res, 200, {
       role: context.role,
       permissions: context.permissions,
+      diagram,
       presence: activePresence(context.tenantId, context.project.id, diagramId, context.user?.id ?? `guest_${context.tenantId}`),
       comments: commentsForDiagram(context.tenantId, context.project.id, diagramId, context.user?.id ?? "", context.permissions),
       notifications: db.prepare("SELECT * FROM notifications WHERE tenant_id = ? AND project_id = ? AND (user_id IS NULL OR user_id = ?) ORDER BY created_at DESC LIMIT 20").all(context.tenantId, context.project.id, context.user?.id ?? "")
@@ -1229,7 +1269,9 @@ async function api(req, res, urlOrPath) {
 
   if (pathname === "/api/diagrams" && req.method === "POST") {
     const input = await body(req);
-    const diagram = { id: createId("diagram"), tenant_id: tenantId, project_id: input.project_id, type: input.type, name: input.name, version: 1, created_at: now(), updated_at: now(), metadata: {}, elements: [], relationships: [] };
+    const context = requireProjectPermission(req, res, input.project_id, "edit");
+    if (!context) return;
+    const diagram = { id: createId("diagram"), tenant_id: tenantId, project_id: context.project.id, type: input.type, name: input.name, version: 1, created_at: now(), updated_at: now(), metadata: {}, elements: [], relationships: [] };
     insertDiagram(diagram);
     return send(res, 201, diagram);
   }
@@ -1238,6 +1280,8 @@ async function api(req, res, urlOrPath) {
   if (diagramDuplicateMatch && req.method === "POST") {
     const current = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramDuplicateMatch[1], tenantId));
     if (!current) return send(res, 404, { error: "Diagram not found" });
+    const context = requireProjectPermission(req, res, current.project_id, "edit");
+    if (!context) return;
     const copy = { ...current, id: createId("diagram"), name: `${current.name} Copy`, version: 1, created_at: now(), updated_at: now() };
     insertDiagram(copy);
     return send(res, 201, copy);
@@ -1248,6 +1292,8 @@ async function api(req, res, urlOrPath) {
     const input = await body(req);
     const current = diagramFromRow(db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId));
     if (!current) return send(res, 404, { error: "Diagram not found" });
+    const context = requireProjectPermission(req, res, current.project_id, "edit");
+    if (!context) return;
     const next = { ...current, name: input.name?.trim() || current.name, updated_at: now() };
     updateDiagram(next);
     return send(res, 200, next);
@@ -1256,6 +1302,8 @@ async function api(req, res, urlOrPath) {
   if (diagramMatch && req.method === "DELETE") {
     const current = db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId);
     if (!current) return send(res, 404, { error: "Diagram not found" });
+    const context = requireProjectPermission(req, res, current.project_id, "edit");
+    if (!context) return;
     db.prepare("DELETE FROM events WHERE diagram_id = ? AND tenant_id = ?").run(current.id, tenantId);
     db.prepare("DELETE FROM diagrams WHERE id = ? AND tenant_id = ?").run(current.id, tenantId);
     db.prepare("DELETE FROM diagram_views WHERE diagram_id = ? AND tenant_id = ?").run(current.id, tenantId);
@@ -1267,7 +1315,22 @@ async function api(req, res, urlOrPath) {
     const input = await body(req);
     const current = db.prepare("SELECT * FROM diagrams WHERE id = ? AND tenant_id = ?").get(diagramMatch[1], tenantId);
     if (!current) return send(res, 404, { error: "Diagram not found" });
-    const candidate = { ...input, tenant_id: tenantId, updated_at: now(), version: current.version + 1 };
+    const context = requireProjectPermission(req, res, current.project_id, "edit");
+    if (!context) return;
+    if (Number(input.version) !== Number(current.version)) {
+      return send(res, 409, {
+        error: "This diagram was changed by another collaborator. Review the latest shared version before saving again.",
+        current_version: current.version
+      });
+    }
+    const candidate = {
+      ...input,
+      id: current.id,
+      tenant_id: tenantId,
+      project_id: current.project_id,
+      updated_at: now(),
+      version: current.version + 1
+    };
     const validation = validateDiagram(candidate);
     if (!validation.valid) return send(res, 422, validation);
     updateDiagram(candidate);

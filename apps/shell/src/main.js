@@ -19,6 +19,9 @@ const storageRemove = (key) => { try { localStorage.removeItem(key); } catch { /
 
 const bus = createEventBus();
 const autoSaveTimers = new Map();
+const saveQueues = new Map();
+const diagramChangeVersions = new Map();
+const lastSavedDiagramVersions = new Map();
 applyTheme(state.settings.theme);
 
 // Dismiss sharing without re-rendering it, so an unsent email/role draft remains intact.
@@ -108,34 +111,56 @@ function repositoryFromDiagrams(diagrams) {
 
 function scheduleAutoSave() {
   if (state.view !== "editor" || !state.diagram?.id) return;
+  const diagramId = state.diagram.id;
+  const changeVersion = (diagramChangeVersions.get(diagramId) ?? 0) + 1;
+  diagramChangeVersions.set(diagramId, changeVersion);
   state.dirtyTabIds.add(state.diagram.id);
   state.diagrams = state.diagrams.map((item) => item.id === state.diagram.id ? state.diagram : item);
   clearTimeout(autoSaveTimers.get(state.diagram.id));
   updateSaveStatus("Unsaved");
   const pendingDiagram = structuredClone(state.diagram);
-  autoSaveTimers.set(state.diagram.id, setTimeout(() => saveCurrentDiagram({ snapshot: false, diagram: pendingDiagram }), 300));
+  autoSaveTimers.set(state.diagram.id, setTimeout(() => saveCurrentDiagram({ snapshot: false, diagram: pendingDiagram, changeVersion }), 300));
 }
 
-async function saveCurrentDiagram({ snapshot = false, diagram = state.diagram } = {}) {
+async function saveCurrentDiagram({ snapshot = false, diagram = state.diagram, changeVersion = diagramChangeVersions.get(diagram?.id) ?? 0 } = {}) {
   if (!diagram?.id) return;
   clearTimeout(autoSaveTimers.get(diagram.id));
   autoSaveTimers.delete(diagram.id);
+  const previousSave = saveQueues.get(diagram.id) ?? Promise.resolve();
+  const queuedSave = previousSave.catch(() => null).then(async () => {
+    try {
+      const isLatestChange = () => (diagramChangeVersions.get(diagram.id) ?? 0) === changeVersion;
+      if (state.diagram?.id === diagram.id && isLatestChange()) updateSaveStatus(snapshot ? "Saving…" : "Auto-saving…");
+      const outgoing = { ...diagram, version: lastSavedDiagramVersions.get(diagram.id) ?? diagram.version };
+      const saved = await api.saveDiagram(outgoing, { snapshot });
+      lastSavedDiagramVersions.set(diagram.id, saved.version);
+      // A response for an older canvas snapshot must not replace newer imported
+      // or edited state. Saves are also serialized so the server ends with the
+      // newest snapshot even when an earlier request was already in flight.
+      if (isLatestChange()) {
+        syncSavedDiagram(saved);
+        await loadModelRepository(state.project?.id);
+        bus.emit("repository:changed", state.modelRepository);
+        if (state.diagram?.id === diagram.id) updateSaveStatus(snapshot ? "Saved milestone" : "Saved");
+        if (snapshot) await loadVersionHistory();
+        setTimeout(() => {
+          if (state.saveStatus === "Saved" || state.saveStatus === "Saved milestone") updateSaveStatus("");
+        }, 1800);
+      }
+      return saved;
+    } catch (error) {
+      if ((diagramChangeVersions.get(diagram.id) ?? 0) === changeVersion) {
+        updateSaveStatus("Save failed");
+        bus.emit("toast", error.message);
+      }
+      return null;
+    }
+  });
+  saveQueues.set(diagram.id, queuedSave);
   try {
-    if (state.diagram?.id === diagram.id) updateSaveStatus(snapshot ? "Saving…" : "Auto-saving…");
-    const saved = await api.saveDiagram(diagram, { snapshot });
-    syncSavedDiagram(saved);
-    await loadModelRepository(state.project?.id);
-    bus.emit("repository:changed", state.modelRepository);
-    if (state.diagram?.id === diagram.id) updateSaveStatus(snapshot ? "Saved milestone" : "Saved");
-    if (snapshot) await loadVersionHistory();
-    setTimeout(() => {
-      if (state.saveStatus === "Saved" || state.saveStatus === "Saved milestone") updateSaveStatus("");
-    }, 1800);
-    return saved;
-  } catch (error) {
-    updateSaveStatus("Save failed");
-    bus.emit("toast", error.message);
-    return null;
+    return await queuedSave;
+  } finally {
+    if (saveQueues.get(diagram.id) === queuedSave) saveQueues.delete(diagram.id);
   }
 }
 
@@ -222,6 +247,7 @@ async function loadWorkspace() {
   state.project = data.projects[0] ?? null;
   state.diagram = data.diagrams[0] ?? null;
   state.diagrams = data.diagrams ?? [];
+  state.diagrams.forEach((diagram) => lastSavedDiagramVersions.set(diagram.id, diagram.version));
   await loadModelRepository(state.project?.id);
   updateWorkspaceTitle();
   bus.emit("bootstrap", data);
@@ -234,6 +260,7 @@ async function openProject(projectId, { updateHistory = true } = {}) {
   const data = await api.request(`/api/projects/${projectId}/open`, { method: "POST" });
   state.project = data.project;
   state.diagrams = data.diagrams ?? [];
+  state.diagrams.forEach((diagram) => lastSavedDiagramVersions.set(diagram.id, diagram.version));
   const rememberedDiagramId = storageGet(`sysml.activeDiagramId.${projectId}`);
   state.diagram = state.diagrams.find((diagram) => diagram.id === rememberedDiagramId) ?? state.diagrams[0] ?? null;
   state.modelRepository = repositoryFromDiagrams(state.diagrams);
@@ -396,6 +423,15 @@ bus.on("dashboard:open", () => {
 });
 bus.on("selection:changed", (selection) => synchronization.publishPresence(null, selection));
 bus.on("canvas:pointer", (cursor) => synchronization.publishPresence(cursor, state.selectedElementIds ?? []));
+bus.on("diagram:remote", (diagram) => {
+  lastSavedDiagramVersions.set(diagram.id, diagram.version);
+  state.history = [];
+  state.future = [];
+});
+bus.on("collaboration:conflict", ({ remoteVersion }) => {
+  updateSaveStatus("Collaboration conflict");
+  bus.emit("toast", `A teammate saved version ${remoteVersion}. Your unsaved canvas was kept; refresh after exporting a backup to load their version.`);
+});
 bus.on("comment:create", ({ input, onSuccess, onError } = {}) => synchronization.addComment(input).then((result) => onSuccess?.(result)).catch((error) => { onError?.(error); bus.emit("toast", error.message); }));
 bus.on("comment:update", ({ commentId, input, onSuccess, onError } = {}) => synchronization.updateComment(commentId, input).then((result) => onSuccess?.(result)).catch((error) => { onError?.(error); bus.emit("toast", error.message); }));
 bus.on("collaboration:retry", () => synchronization.refresh());
