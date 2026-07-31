@@ -1,5 +1,4 @@
 import { clampSidebarWidth, nextRightPanelState, persistSidebarLayout, SIDEBAR_CONSTRAINTS } from "../app/sidebarLayout.js";
-import { resetEditorInteractionState } from "../app/state.js";
 import { createScopedStyles } from "../../../../packages/ui/src/scopedStyles.js";
 import { diagramCatalog } from "../../../../packages/model-core/src/diagram-catalog.js";
 
@@ -20,10 +19,6 @@ let cleanupMountedModules = () => {};
 let themeRequestVersion = 0;
 let rightPanelRequestVersion = 0;
 function renderShell() {
-  if (!state.user && state.view === "editor") {
-    state.view = "dashboard";
-    resetEditorInteractionState(state);
-  }
   cleanupSidebarInteractions();
   cleanupMountedModules();
   cleanupSidebarInteractions = () => {};
@@ -33,33 +28,19 @@ function renderShell() {
   document.querySelector("#app").innerHTML = `
     <header class="topbar ${isLanding ? "landing-topbar" : ""} ${state.view === "dashboard" && state.user ? "dashboard-topbar" : ""}">
       <div class="topbar-left">
-        ${isLanding ? `<div class="landing-brand" aria-label="SysML Studio"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></div>` : `<button id="brand-home" class="brand-button" title="Open Project Dashboard" aria-label="Open Project Dashboard"><strong class="brand-mark"><span class="brand-icon">S</span><span class="brand-label">SysML Studio</span></strong></button>`}
-        ${state.view === "editor" ? `<button id="manual-save" class="icon-button" title="Save Diagram" aria-label="Save Diagram">${icons.save}</button><span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
+        ${isLanding ? `<div class="landing-brand" aria-label="Model Studio"><strong class="brand-mark"><span class="brand-icon">M</span><span class="brand-label">Model Studio</span></strong></div>` : `<strong class="brand-mark" aria-label="Model Studio"><span class="brand-icon">M</span><span class="brand-label">Model Studio</span></strong>`}
+        ${state.view === "editor" ? `<span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
         ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : isLanding ? "" : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
         ${isLanding ? `<nav class="landing-nav" aria-label="Landing page"><a href="#capabilities">Capabilities</a><a href="#workflow">Workflow</a><a href="#about">About</a></nav>` : ""}
-        ${state.view === "editor" ? `<button id="ai-sidebar-toggle" class="icon-button ${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "active" : ""}" title="${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "Close" : "Open"} AI advisor" aria-label="${state.sidebarLayout.right.open && state.rightPanel === "advisor" ? "Close" : "Open"} AI advisor" aria-controls="right-sidebar-content" aria-expanded="${state.sidebarLayout.right.open && state.rightPanel === "advisor"}">${icons.ai}</button><button id="history-toggle" class="icon-button ${state.sidebarLayout.right.open && state.rightPanel === "history" ? "active" : ""}" title="${state.sidebarLayout.right.open && state.rightPanel === "history" ? "Close" : "Open"} History" aria-label="${state.sidebarLayout.right.open && state.rightPanel === "history" ? "Close" : "Open"} History" aria-controls="right-sidebar-content" aria-expanded="${state.sidebarLayout.right.open && state.rightPanel === "history"}">${icons.history}</button>` : ""}
         <button id="theme-toggle" class="icon-button" type="button" data-theme="${state.settings.theme}" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-pressed="${state.settings.theme === "light"}">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
-        ${state.view === "editor" ? `<div class="share-control">
-          <button id="share-project" class="share-button" title="Share project" aria-label="Open project sharing" aria-haspopup="dialog" aria-expanded="false"><span class="share-lock" aria-hidden="true">${icons.share}</span><span>Share</span><span class="share-chevron" aria-hidden="true">▾</span></button>
-          <div id="share-popover" class="share-popover" role="dialog" aria-modal="false" aria-labelledby="share-popover-title" hidden>
-            <div class="share-popover-header"><div><strong id="share-popover-title">Share project</strong><small>${escapeHtml(state.project?.name ?? "Untitled Project")}</small></div><button id="close-share" class="share-close" aria-label="Close sharing">×</button></div>
-            <form id="share-form">
-              <label for="share-email">Invite by email</label>
-              <div class="share-invite-row"><input id="share-email" type="email" autocomplete="email" value="${escapeHtml(state.shareDraft.email)}" placeholder="name@example.com" required><select id="share-role" aria-label="Access level"><option value="Viewer" ${state.shareDraft.role === "Viewer" ? "selected" : ""}>Viewer</option><option value="Commenter" ${state.shareDraft.role === "Commenter" ? "selected" : ""}>Commenter</option><option value="Editor" ${state.shareDraft.role === "Editor" ? "selected" : ""}>Editor</option></select></div>
-              <p id="share-role-help" class="share-role-help">Can view the project but cannot make changes.</p>
-              <button class="primary share-send" type="submit">Send invite</button>
-            </form>
-            <button id="copy-project-link" class="copy-project-link" type="button">Copy project link</button>
-          </div>
-        </div>` : ""}
         <section id="topbar-project-export" class="topbar-export"></section>
         ${isLanding ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
     </header>
     ${state.view === "editor" ? `
-      <main class="workspace ${state.sidebarLayout.left.open ? "left-open" : ""} ${state.sidebarLayout.right.open ? "right-open" : ""}">
+      <main class="workspace model-studio-local ${state.sidebarLayout.left.open ? "left-open" : ""}">
         <aside id="project-tools-sidebar" class="left-rail" data-open="${state.sidebarLayout.left.open}" aria-label="Project tools">
           <div class="sidebar-header"><button id="sidebar-toggle" class="sidebar-toggle" title="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-content" aria-expanded="${state.sidebarLayout.left.open}">☰</button><strong>Project tools</strong></div>
           <div id="project-tools-content" class="sidebar-content">
@@ -69,7 +50,6 @@ function renderShell() {
             <section id="properties-panel"></section>
             <section id="project-validation" class="sidebar-bottom-panel"></section>
           </div>
-          <section id="left-account" class="left-account" aria-label="Signed in account"></section>
           <div class="sidebar-resize-handle" data-resize-sidebar="left" role="separator" aria-label="Resize project tools" aria-orientation="vertical" aria-valuemin="${SIDEBAR_CONSTRAINTS.left.minimum}" aria-valuemax="${SIDEBAR_CONSTRAINTS.left.maximum}" aria-valuenow="${state.sidebarLayout.left.width}" tabindex="0"></div>
         </aside>
         <section class="canvas-workarea">
@@ -131,7 +111,7 @@ function renderShell() {
     ` : `
       <main class="dashboard-workspace">
         <aside class="dashboard-sidebar" aria-label="Workspace navigation">
-          <div class="dashboard-sidebar-brand"><span class="dashboard-logo">${dashboardIcons.logo}</span><span><strong>SysML Studio</strong><small>Workspace</small></span></div>
+          <div class="dashboard-sidebar-brand"><span class="dashboard-logo">${dashboardIcons.logo}</span><span><strong>Model Studio</strong><small>Workspace</small></span></div>
           <nav class="dashboard-nav" aria-label="Dashboard">
             <small>Navigate</small>
             <button class="active" type="button" data-dashboard-view="workspace"><span class="dashboard-nav-icon">${dashboardIcons.grid}</span><span>Workspace</span><i></i></button>
@@ -178,13 +158,11 @@ function renderShell() {
   } else if (state.view === "editor") {
     mount("project-explorer", document.querySelector("#project-explorer"));
     mount("element-palette", document.querySelector("#element-palette"));
+    mount("properties-panel", document.querySelector("#properties-panel"));
     mount("project-validation", document.querySelector("#project-validation"));
     mount("diagram-canvas", document.querySelector("#diagram-canvas"));
-    if (state.rightPanel === "advisor") mount("ai-advisor", document.querySelector("#ai-advisor"));
     mount("project-export", document.querySelector("#topbar-project-export"));
     mount("project-import", document.querySelector("#project-import"));
-    if (state.settingsOpen) mount("auth-tenant-settings", document.querySelector("#auth-tenant-settings"));
-    mount("auth-session", document.querySelector("#left-account"));
   }
   cleanupMountedModules = () => moduleCleanups.splice(0).reverse().forEach((cleanup) => cleanup());
 

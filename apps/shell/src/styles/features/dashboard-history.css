@@ -1,4 +1,6 @@
 .workspace { --left-sidebar-width: 0px; --right-sidebar-width: 0px; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, var(--left-sidebar-width)) minmax(0, 1fr) minmax(0, var(--right-sidebar-width)); overflow: hidden; isolation: isolate; }
+.workspace.model-studio-local { --right-sidebar-width: 0px !important; }
+.workspace.model-studio-local .right-rail { display: none; }
 .workspace > .left-rail { grid-column: 1; }
 .workspace > .canvas-host, .workspace > .canvas-workarea { grid-column: 2; }
 .workspace > .right-rail { grid-column: 3; }

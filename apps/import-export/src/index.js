@@ -150,7 +150,7 @@ registerMfe("project-export", (element, { state, bus }) => {
     element.innerHTML = `
       <button id="export-toggle" class="export-button" type="button" aria-haspopup="menu" aria-expanded="${open}">Export <span aria-hidden="true">⌄</span></button>
       ${open ? `<div class="export-menu" role="menu" aria-label="Export options">
-        <div class="export-menu-help"><strong>Choose how to export</strong><span>Studio JSON can fully restore this project.</span></div>
+        <div class="export-menu-help"><strong>Download your work</strong><span>JSON is the durable Model Studio project file.</span></div>
         ${[["json", "JSON", "Restorable project"], ["svg", "SVG", "Editable vector"], ["png", "PNG", "2× raster image"], ["pdf", "PDF", "Vector document"], ["plantuml", "PUML", "PlantUML source"], ["csv", "CSV", "Requirements table"], ["xlsx", "XLSX", "Excel requirements"]].map(([id, label, detail]) => `<button data-export="${id}" type="button" role="menuitem" ${busy ? "disabled" : ""}><span class="export-format">${label}</span><span>${detail}</span></button>`).join("")}
         ${statusMarkup(status, "export-status")}
       </div>` : ""}`;
@@ -261,7 +261,7 @@ registerMfe("project-import", (element, { state, bus, setDiagram, saveCurrentDia
 
   function render() {
     element.innerHTML = `<div class="project-import-control">
-      <div><strong>Import</strong><span>Restore a Studio JSON project</span></div>
+      <div><strong>Import</strong><span>Restore a Model Studio JSON project</span></div>
       <button id="choose-import" type="button" ${busy ? "disabled" : ""}>${busy ? "Checking…" : "Import"}</button>
       <input id="import-file" type="file" accept=".json,application/json" hidden>
     </div>${statusMarkup(status, "import-status")}`;

@@ -34,7 +34,7 @@ test("PlantUML emits semantic relationship and stable aliases", () => {
   const source = toPlantUml(diagram); assert.match(source, /n_b --> "1" n_a : satisfies \/ safety/); assert.match(source, /skinparam linetype ortho/);
 });
 
-test("Studio JSON round-trips canvas content, styling, routes and viewport", () => {
+test("Model Studio JSON round-trips canvas content, styling, routes and viewport", () => {
   const styled = structuredClone(diagram);
   styled.id = "diagram-1";
   styled.metadata = { gridSize: 28, showGrid: false, pageSize: "a3-landscape" };
@@ -54,7 +54,7 @@ test("Studio JSON round-trips canvas content, styling, routes and viewport", () 
   const restored = importers.get("json").parse(serialized);
   const packageValue = JSON.parse(serialized);
 
-  assert.equal(packageValue.format, "sysml-studio-project");
+  assert.equal(packageValue.format, "model-studio-project");
   assert.equal(packageValue.schemaVersion, 3);
   assert.deepEqual(packageValue.diagrams[0], styled);
   assert.deepEqual(restored.diagram, styled);

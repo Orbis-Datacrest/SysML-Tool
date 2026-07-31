@@ -1,4 +1,10 @@
-# SysML/UML Modeling Tool
+# Model Studio
+
+Model Studio is a lightweight, client-first diagram creation tool. It has no
+account requirement and does not permanently save projects to a backend.
+The current workspace, including undo/redo history, is kept temporarily in
+browser storage so refreshes are safe. Download JSON from Export for durable
+storage and future restoration; SVG and PNG exports are also available.
 
 A browser-based UML and SysML modeling workspace for creating diagrams, maintaining a shared semantic model, validating relationships, collaborating through anchored comments, and reviewing or generating model changes with an AI assistant.
 

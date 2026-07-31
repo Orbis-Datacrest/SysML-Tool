@@ -1,4 +1,4 @@
-export const PROJECT_FORMAT = "sysml-studio-project";
+export const PROJECT_FORMAT = "model-studio-project";
 export const PROJECT_SCHEMA_VERSION = 3;
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
@@ -142,7 +142,7 @@ export function parseProjectSnapshot(text) {
   }
   requireRecord(value, "Import file");
 
-  if (value.format !== undefined && value.format !== PROJECT_FORMAT) throw new Error(`Unsupported file format "${value.format}".`);
+  if (value.format !== undefined && ![PROJECT_FORMAT, "sysml-studio-project"].includes(value.format)) throw new Error(`Unsupported file format "${value.format}".`);
   if (value.schemaVersion !== undefined && ![2, PROJECT_SCHEMA_VERSION].includes(value.schemaVersion)) {
     throw new Error(`Unsupported schema version "${value.schemaVersion}".`);
   }
