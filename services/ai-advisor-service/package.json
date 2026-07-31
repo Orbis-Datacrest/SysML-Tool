@@ -2,5 +2,5 @@
   "name": "@sysml/ai-advisor-service",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/providerRegistry.js"
+  "main": "src/proposalContract.js"
 }

@@ -58,13 +58,15 @@
   --comment-ink: #1f1300;
   --collaboration-ink: #061018;
   /* Shared geometry keeps shell chrome and mounted tools on one sizing rhythm. */
-  --topbar-height: 48px;
-  --control-height: 34px;
-  --control-radius: 7px;
+  --topbar-height: 56px;
+  --control-height: 36px;
+  --control-radius: 8px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
 }
 
 :root[data-theme="light"] {
@@ -134,18 +136,35 @@ img, svg { max-width: 100%; }
 :focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
 button, input, select, textarea { font: inherit; }
 input, select, textarea { max-width: 100%; }
+select {
+  padding: 7px 30px 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background-color: var(--surface-control);
+  color: var(--ink);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+select:hover { border-color: var(--border-hover); background-color: var(--surface-control-hover); }
+select:focus { border-color: var(--accent-2); outline: 3px solid var(--focus-ring); outline-offset: 0; }
+select:disabled { cursor: not-allowed; opacity: .5; }
+select option, select optgroup { background: var(--surface-elevated); color: var(--ink); }
 input[type="color"] { padding: 2px; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--surface-input); appearance: auto; }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
 input[type="color"]::-moz-color-swatch { border: 0; border-radius: 3px; }
 button, input, select { min-height: var(--control-height); }
-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--line); background: var(--surface-control); color: var(--ink); border-radius: var(--control-radius); padding: 6px 10px; cursor: pointer; line-height: 1.2; }
+button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--line); background: var(--surface-control); color: var(--ink); border-radius: var(--control-radius); padding: 7px 11px; cursor: pointer; line-height: 1.2; transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
 button:hover { border-color: var(--border-hover); background: var(--surface-control-hover); }
 button:disabled { cursor: not-allowed; opacity: .5; }
 button.primary { background: var(--accent); color: var(--ink-on-accent); border-color: var(--accent); }
 button.primary:hover { background: color-mix(in srgb, var(--accent), #000 16%); border-color: color-mix(in srgb, var(--accent), #000 16%); }
 button.danger { border-color: var(--danger-border); color: var(--danger-ink); background: var(--danger-surface); }
 button.danger:hover { background: var(--danger-surface-hover); border-color: var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
 
 /* Chromium and Safari use pseudo-elements for scrollbars; Firefox uses scrollbar-color above. */
 .sidebar-content::-webkit-scrollbar, .canvas-host::-webkit-scrollbar, .chat-log::-webkit-scrollbar { width: 11px; height: 11px; }

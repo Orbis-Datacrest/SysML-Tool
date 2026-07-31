@@ -5,11 +5,7 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
   const readStorage = (key) => { try { return storage?.getItem(key) ?? null; } catch { return null; } };
   const desktopLayout = (() => { try { return media("(min-width: 768px)").matches; } catch { return true; } })();
   return {
-    tenantId: "tenant_demo",
-    authToken: readStorage("sysml.authToken") ?? "",
-    refreshToken: readStorage("sysml.refreshToken") ?? "",
-    user: null,
-    view: "dashboard",
+    view: "editor",
     sidebarLayout: createSidebarLayout(storage, desktopLayout),
     rightPanel: "advisor",
     selectedHistoryVersion: "current",
@@ -20,7 +16,6 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
     auditHistory: [],
     reviews: [],
     versionCompare: { from: "", to: "", diff: null },
-    collaboration: { role: "Owner", permissions: [], presence: [], comments: [], notifications: [], online: false, loading: true, error: "" },
     settings: { theme: normalizeTheme(readStorage("sysml.theme")) },
     project: null,
     diagram: null,
@@ -33,7 +28,6 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
     canvasViewport: { zoom: 1, scrollLeft: 0, scrollTop: 0 },
     selectedTool: { type: "select", kind: null, label: "" },
     saveStatus: "",
-    shareDraft: { email: "", role: "Viewer" },
     history: [],
     future: []
   };

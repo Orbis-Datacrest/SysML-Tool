@@ -2,13 +2,10 @@ import { existsSync } from "node:fs";
 
 const dirs = [
   "apps/shell",
-  "apps/project-dashboard",
   "apps/project-explorer",
   "apps/diagram-canvas",
   "apps/ai-advisor",
   "apps/import-export",
-  "services/auth-service",
-  "services/tenant-service",
   "services/project-service",
   "services/diagram-service",
   "services/ai-advisor-service",

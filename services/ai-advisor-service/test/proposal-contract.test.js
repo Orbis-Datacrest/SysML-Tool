@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { buildAiContext } from "../src/contextBuilder.js";
 import { materializeSemanticProposal, selectMaterializedOperations, validateProposalReferences } from "../src/layoutEngine.js";
 import { validateAiProposal } from "../src/proposalContract.js";
-import { AiProviderRegistry, createOllamaProvider, createOpenAiProvider } from "../src/providerRegistry.js";
 
 const baseProposal = () => ({
   summary: "Add a domain class",
@@ -61,32 +60,4 @@ test("proposal references must resolve against the diagram or declared temporary
   const proposal = baseProposal();
   proposal.operations.push({ id: "bad_link", type: "add_relationship", rationale: "Invalid target.", relationship: { ref: "link", kind: "association", source_ref: "existing", target_ref: "missing", label: "", properties: {}, stereotypes: [] } });
   assert.throws(() => validateProposalReferences(diagram, validateAiProposal(proposal, "uml-class")), /unknown element/);
-});
-
-test("provider registry gives Ollama the strict response schema", async () => {
-  let requestBody;
-  const provider = createOllamaProvider({ fetchImpl: async (_url, options) => {
-    requestBody = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ message: { content: JSON.stringify(baseProposal()) } }) };
-  } });
-  const registry = new AiProviderRegistry().register("test", provider);
-  await registry.propose("test", { context: { diagram: { type: "uml-class" } }, instructions: "Return a proposal." });
-  assert.equal(requestBody.format.additionalProperties, false);
-  assert.match(requestBody.messages[0].content, /matching this schema exactly/);
-});
-
-test("OpenAI provider uses Responses structured outputs without exposing or storing the key", async () => {
-  let requestUrl; let requestHeaders; let requestBody;
-  const provider = createOpenAiProvider({ apiKey: "sk-test-secret-key-value-123456", model: "gpt-4o-mini", fetchImpl: async (url, options) => {
-    requestUrl = url; requestHeaders = options.headers; requestBody = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(baseProposal()) }] }] }) };
-  } });
-  const registry = new AiProviderRegistry();
-  const result = await registry.proposeWith(provider, { context: { request: "Create a class Customer" }, instructions: "Return a proposal." });
-  assert.equal(requestUrl, "https://api.openai.com/v1/responses");
-  assert.equal(requestHeaders.authorization, "Bearer sk-test-secret-key-value-123456");
-  assert.equal(requestBody.text.format.type, "json_schema");
-  assert.equal(requestBody.text.format.strict, true);
-  assert.equal(requestBody.store, false);
-  assert.equal(result.operations[0].element.name, "Customer");
 });

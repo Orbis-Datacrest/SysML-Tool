@@ -1,6 +1,4 @@
 .workspace { --left-sidebar-width: 0px; --right-sidebar-width: 0px; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, var(--left-sidebar-width)) minmax(0, 1fr) minmax(0, var(--right-sidebar-width)); overflow: hidden; isolation: isolate; }
-.workspace.model-studio-local { --right-sidebar-width: 0px !important; }
-.workspace.model-studio-local .right-rail { display: none; }
 .workspace > .left-rail { grid-column: 1; }
 .workspace > .canvas-host, .workspace > .canvas-workarea { grid-column: 2; }
 .workspace > .right-rail { grid-column: 3; }
@@ -36,7 +34,6 @@
 .dashboard-account-button strong, .dashboard-account-button small, .account-menu header strong, .account-menu header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-account-button small, .account-menu small { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .dashboard-account-button > b { color: var(--muted); font-size: 12px; text-align: center; }
-.dashboard-account .auth-avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--ink-on-brand); font-weight: 850; }
 .account-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 10px); padding: 10px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-elevated); box-shadow: 0 20px 55px var(--shadow-color); }
 .account-menu header { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 9px; padding: 4px 4px 11px; border-bottom: 1px solid var(--line); }
 .account-menu-settings { display: grid; gap: 5px; padding: 11px 0; border-bottom: 1px solid var(--line); }

@@ -11,12 +11,11 @@ const dashboardIcons = {
 };
 
 export function createShellRenderer({
-  activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, nextTheme, projectUrl,
+  activateDiagramTab, api, applyTheme, bus, cancelAutoSave, escapeHtml, icons, loadVersionHistory, mountMfe, nextTheme,
   redoDiagram, rememberPage, saveCurrentDiagram, saveMilestone, setDiagram, showDashboard, state, undoDiagram, updateDiagramDraft
 }) {
 let cleanupSidebarInteractions = () => {};
 let cleanupMountedModules = () => {};
-let themeRequestVersion = 0;
 let rightPanelRequestVersion = 0;
 function renderShell() {
   cleanupSidebarInteractions();
@@ -24,23 +23,23 @@ function renderShell() {
   cleanupSidebarInteractions = () => {};
   cleanupMountedModules = () => {};
   applyTheme(state.settings.theme);
-  const isLanding = state.view === "dashboard" && !state.user;
+  const isLanding = false;
   document.querySelector("#app").innerHTML = `
-    <header class="topbar ${isLanding ? "landing-topbar" : ""} ${state.view === "dashboard" && state.user ? "dashboard-topbar" : ""}">
+    <header class="topbar">
       <div class="topbar-left">
         ${isLanding ? `<div class="landing-brand" aria-label="Model Studio"><strong class="brand-mark"><span class="brand-icon">M</span><span class="brand-label">Model Studio</span></strong></div>` : `<strong class="brand-mark" aria-label="Model Studio"><span class="brand-icon">M</span><span class="brand-label">Model Studio</span></strong>`}
         ${state.view === "editor" ? `<span id="save-status" class="save-status">${state.saveStatus}</span>` : ""}
         ${state.view === "editor" ? `<button id="project-title" class="top-project-name" title="Rename project" aria-label="Rename project: ${escapeHtml(state.project?.name ?? "Untitled Project")}"><span class="project-name-text">${escapeHtml(state.project?.name ?? "Untitled Project")}</span><span class="project-name-edit" aria-hidden="true">✎</span></button>` : isLanding ? "" : `<span id="project-title">Project Dashboard</span>`}
       </div>
       <div class="topbar-actions">
+        <button id="ai-sidebar-toggle" class="icon-button ${state.sidebarLayout.right.open ? "active" : ""}" title="${state.sidebarLayout.right.open ? "Close" : "Open"} AI advisor" aria-label="${state.sidebarLayout.right.open ? "Close" : "Open"} AI advisor" aria-expanded="${state.sidebarLayout.right.open}">${icons.ai}</button>
         ${isLanding ? `<nav class="landing-nav" aria-label="Landing page"><a href="#capabilities">Capabilities</a><a href="#workflow">Workflow</a><a href="#about">About</a></nav>` : ""}
         <button id="theme-toggle" class="icon-button" type="button" data-theme="${state.settings.theme}" title="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-label="Toggle ${state.settings.theme === "dark" ? "Light" : "Dark"} Mode" aria-pressed="${state.settings.theme === "light"}">${state.settings.theme === "dark" ? icons.moon : icons.sun}</button>
         <section id="topbar-project-export" class="topbar-export"></section>
-        ${isLanding ? `<section id="auth-session" class="topbar-auth"></section>` : ""}
       </div>
     </header>
     ${state.view === "editor" ? `
-      <main class="workspace model-studio-local ${state.sidebarLayout.left.open ? "left-open" : ""}">
+      <main class="workspace model-studio-local ${state.sidebarLayout.left.open ? "left-open" : ""} ${state.sidebarLayout.right.open ? "right-open" : ""}">
         <aside id="project-tools-sidebar" class="left-rail" data-open="${state.sidebarLayout.left.open}" aria-label="Project tools">
           <div class="sidebar-header"><button id="sidebar-toggle" class="sidebar-toggle" title="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-label="${state.sidebarLayout.left.open ? "Collapse" : "Expand"} project tools" aria-controls="project-tools-content" aria-expanded="${state.sidebarLayout.left.open}">☰</button><strong>Project tools</strong></div>
           <div id="project-tools-content" class="sidebar-content">
@@ -72,7 +71,7 @@ function renderShell() {
                 ${state.versionHistory.map((item) => `<button class="history-state-card ${String(state.selectedHistoryVersion) === String(item.version) ? "selected" : ""}" data-history-version="${item.version}" role="option" aria-selected="${String(state.selectedHistoryVersion) === String(item.version)}"><span><strong>Version ${item.version}</strong><small>${escapeHtml(item.description || "Saved tab milestone")} · ${(item.diagrams ?? []).length} tab${(item.diagrams ?? []).length === 1 ? "" : "s"} · ${new Date(item.created_at).toLocaleString()}</small></span>${String(state.selectedHistoryVersion) === String(item.version) ? `<span class="selected-state-badge">Selected</span>` : ""}</button>`).join("") || `<p class="history-empty">No saved states yet. Use Save Diagram to create one.</p>`}
               </div>
               <div class="history-sidebar-actions"><button id="refresh-history" type="button">Refresh</button><button id="restore-selected-version" class="primary" type="button" ${state.selectedHistoryVersion === "current" ? "disabled" : ""}>Restore tabs</button></div>
-            </section>` : `<section id="ai-advisor"></section><div class="ai-settings-actions"><button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="${state.settingsOpen}" aria-controls="auth-tenant-settings">${state.settingsOpen ? "Close Settings" : "Settings"}</button></div>${state.settingsOpen ? `<section id="auth-tenant-settings" class="ai-settings-slot"></section>` : ""}`}
+            </section>` : `<section id="ai-advisor"></section>`}
           </div>
           <div class="sidebar-resize-handle" data-resize-sidebar="right" role="separator" aria-label="Resize assistant panel" aria-orientation="vertical" aria-valuemin="${SIDEBAR_CONSTRAINTS.right.minimum}" aria-valuemax="${SIDEBAR_CONSTRAINTS.right.maximum}" aria-valuenow="${state.sidebarLayout.right.width}" tabindex="0"></div>
         </aside>
@@ -86,7 +85,7 @@ function renderShell() {
             <p class="landing-eyebrow"><span></span> Browser-based systems engineering</p>
             <h1 id="landing-title">Turn complex systems into <em>clear decisions.</em></h1>
             <p class="landing-lead">Model architecture, connect requirements, and validate your design in one collaborative SysML workspace built for focused engineering teams.</p>
-            <div class="landing-cta"><button class="landing-primary" data-auth-mode="signup" type="button">Start modeling <span aria-hidden="true">→</span></button><button class="landing-secondary" data-auth-mode="login" type="button">Open your workspace</button></div>
+            <div class="landing-cta"><button class="landing-primary" type="button">Start modeling <span aria-hidden="true">→</span></button></div>
             <div class="landing-proof" aria-label="Product benefits"><span><strong>01</strong> Visual modeling</span><span><strong>02</strong> Live validation</span><span><strong>03</strong> Team ready</span></div>
           </div>
           <div class="landing-visual" aria-label="Example connected system model">
@@ -106,7 +105,7 @@ function renderShell() {
         </section>
         <section id="capabilities" class="landing-features" aria-label="Core capabilities"><article><span>◇</span><div><strong>Architect visually</strong><p>Build connected SysML and UML diagrams without losing the underlying model.</p></div></article><article><span>⌁</span><div><strong>Validate continuously</strong><p>Catch incomplete relationships and design conflicts as the model evolves.</p></div></article><article><span>◎</span><div><strong>Collaborate with context</strong><p>Share decisions, history, and engineering intent in one secure workspace.</p></div></article></section>
         <section id="workflow" class="landing-statement"><p>One source of truth</p><h2>From first concept to validated architecture.</h2></section>
-        <section id="about" class="landing-about"><span>SysML Studio</span><p>Purpose-built for teams designing the systems that shape tomorrow.</p></section>
+        <section id="about" class="landing-about"><span>Model Studio</span><p>Purpose-built for teams designing the systems that shape tomorrow.</p></section>
       </main>
     ` : `
       <main class="dashboard-workspace">
@@ -119,7 +118,6 @@ function renderShell() {
             <button type="button" data-dashboard-view="activity"><span class="dashboard-nav-icon">${dashboardIcons.activity}</span><span>Invitations</span></button>
           </nav>
           <section class="dashboard-pinned"><header><small>Pinned</small><span>1</span></header><button type="button" disabled><span class="dashboard-nav-icon">${dashboardIcons.folder}</span><span>Untitled Project</span></button></section>
-          <section id="auth-session" class="dashboard-account"></section>
         </aside>
         <section class="dashboard-main">
           <header class="dashboard-context"><span>Workspace</span><b aria-hidden="true">/</b><strong>Overview</strong></header>
@@ -152,15 +150,13 @@ function renderShell() {
     const cleanup = mountMfe(name, target, context);
     if (typeof cleanup === "function") moduleCleanups.push(cleanup);
   };
-  if (state.view === "dashboard") {
-    mount("auth-session", document.querySelector("#auth-session"));
-    if (state.user) mount("project-dashboard", document.querySelector("#project-dashboard"));
-  } else if (state.view === "editor") {
+  if (state.view === "editor") {
     mount("project-explorer", document.querySelector("#project-explorer"));
     mount("element-palette", document.querySelector("#element-palette"));
     mount("properties-panel", document.querySelector("#properties-panel"));
     mount("project-validation", document.querySelector("#project-validation"));
     mount("diagram-canvas", document.querySelector("#diagram-canvas"));
+    mount("ai-advisor", document.querySelector("#ai-advisor"));
     mount("project-export", document.querySelector("#topbar-project-export"));
     mount("project-import", document.querySelector("#project-import"));
   }
@@ -176,7 +172,6 @@ function renderShell() {
   document.querySelector("#brand-home")?.addEventListener("click", () => {
     if (state.view === "editor") showDashboard();
   });
-  document.querySelectorAll("[data-auth-mode]").forEach((button) => button.addEventListener("click", () => bus.emit("auth:open", button.dataset.authMode)));
   document.querySelectorAll("[data-dashboard-view]").forEach((button) => button.addEventListener("click", () => {
     document.querySelectorAll("[data-dashboard-view]").forEach((item) => item.classList.toggle("active", item === button));
     bus.emit("dashboard:view", button.dataset.dashboardView);
@@ -185,8 +180,11 @@ function renderShell() {
     if (!diagram || diagram.id === state.diagram?.id) return;
     activateDiagramTab(state, diagram);
     rememberPage("editor", state.project?.id, diagram.id);
-    state.saveStatus = state.dirtyTabIds.has(diagram.id) ? "Unsaved" : "";
-    renderShell();
+    document.querySelectorAll(".diagram-tab").forEach((tab) => {
+      const active = tab.dataset.tabId === diagram.id;
+      tab.classList.toggle("active", active);
+      tab.querySelector(".diagram-tab-select")?.setAttribute("aria-selected", String(active));
+    });
     bus.emit("diagram:changed", diagram);
   };
   document.querySelectorAll(".diagram-tab").forEach((tab) => {
@@ -208,7 +206,7 @@ function renderShell() {
         const name = input.value.trim();
         if (save && name && name !== diagram.name) {
           try {
-            const renamed = await api.request(`/api/diagrams/${diagram.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+            const renamed = await api.request(`local:diagram/${diagram.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
             state.diagrams = state.diagrams.map((item) => item.id === renamed.id ? { ...item, name: renamed.name, updated_at: renamed.updated_at } : item);
             if (state.diagram?.id === renamed.id) state.diagram = { ...state.diagram, name: renamed.name, updated_at: renamed.updated_at };
           } catch (error) { bus.emit("toast", error.message); }
@@ -231,7 +229,7 @@ function renderShell() {
         if (deleteButton) deleteButton.disabled = true;
         try {
           cancelAutoSave(diagram.id);
-          await api.request(`/api/diagrams/${diagram.id}`, { method: "DELETE" });
+          await api.request(`local:diagram/${diagram.id}`, { method: "DELETE" });
           const index = state.diagrams.findIndex((item) => item.id === diagram.id);
           state.diagrams = state.diagrams.filter((item) => item.id !== diagram.id);
           delete state.tabStates[diagram.id]; state.dirtyTabIds.delete(diagram.id);
@@ -290,7 +288,7 @@ function renderShell() {
       submit.disabled = true;
       try {
         // The selection names the tab only; the canvas keeps the existing project diagram behavior.
-        const created = await api.request("/api/diagrams", { method: "POST", body: JSON.stringify({ project_id: state.project.id, type: state.diagram?.type ?? "uml-class", name }) });
+        const created = await api.request("local:diagrams", { method: "POST", body: JSON.stringify({ project_id: state.project.id, type: selected?.value ?? "uml-class", name }) });
         state.diagrams.push(created);
         activateDiagramTab(state, created);
         rememberPage("editor", state.project?.id, created.id);
@@ -475,7 +473,6 @@ function renderShell() {
   });
   document.querySelector("#theme-toggle")?.addEventListener("click", async () => {
     const requestedTheme = nextTheme(state.settings.theme);
-    const requestVersion = ++themeRequestVersion;
     state.settings.theme = requestedTheme;
     applyTheme(requestedTheme);
     const toggle = document.querySelector("#theme-toggle");
@@ -487,70 +484,6 @@ function renderShell() {
       toggle.setAttribute("aria-pressed", String(requestedTheme === "light"));
     }
     bus.emit("theme:changed", requestedTheme);
-    if (state.user) {
-      try {
-        const result = await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme: requestedTheme }) });
-        if (requestVersion !== themeRequestVersion || state.settings.theme !== requestedTheme) return;
-        state.settings = { ...state.settings, ...result.settings, theme: requestedTheme };
-      } catch (error) {
-        if (requestVersion === themeRequestVersion) bus.emit("toast", `Theme preference was not saved: ${error.message}`);
-      }
-    }
-  });
-  const sharePopover = document.querySelector("#share-popover");
-  const shareButton = document.querySelector("#share-project");
-  const setShareOpen = (open) => {
-    if (!sharePopover || !shareButton) return;
-    sharePopover.hidden = !open;
-    shareButton.setAttribute("aria-expanded", String(open));
-  };
-  const stopTopbarMenuSync = bus.on("ui:menu-open", (menu) => { if (menu !== "share") setShareOpen(false); });
-  const previousSidebarCleanup = cleanupSidebarInteractions;
-  cleanupSidebarInteractions = () => { previousSidebarCleanup(); stopTopbarMenuSync(); };
-  document.querySelector("#share-project")?.addEventListener("click", () => {
-    const opening = sharePopover.hidden;
-    if (opening) bus.emit("ui:menu-open", "share");
-    setShareOpen(opening);
-    if (opening) document.querySelector("#share-email")?.focus();
-  });
-  document.querySelector("#close-share")?.addEventListener("click", () => setShareOpen(false));
-  const shareRoleHelp = {
-    Viewer: "Can view the project but cannot make changes.",
-    Commenter: "Can view the project and leave comments.",
-    Editor: "Can edit diagrams and project content."
-  };
-  document.querySelector("#share-email")?.addEventListener("input", (event) => {
-    state.shareDraft.email = event.target.value;
-  });
-  document.querySelector("#share-role")?.addEventListener("change", (event) => {
-    state.shareDraft.role = event.target.value;
-    document.querySelector("#share-role-help").textContent = shareRoleHelp[event.target.value];
-  });
-  const shareRoleHelpTarget = document.querySelector("#share-role-help");
-  if (shareRoleHelpTarget) shareRoleHelpTarget.textContent = shareRoleHelp[state.shareDraft.role];
-  document.querySelector("#share-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const submit = event.currentTarget.querySelector("button[type='submit']");
-    submit.disabled = true;
-    try {
-      await api.request(`/api/projects/${state.project.id}/shares`, {
-        method: "POST",
-        body: JSON.stringify({ email: state.shareDraft.email, role: state.shareDraft.role })
-      });
-      state.shareDraft.email = "";
-      document.querySelector("#share-email").value = "";
-      setShareOpen(false);
-      bus.emit("toast", "Project invitation sent");
-    } catch (error) {
-      bus.emit("toast", error.message);
-    } finally {
-      submit.disabled = false;
-    }
-  });
-  document.querySelector("#copy-project-link")?.addEventListener("click", async () => {
-    const url = projectUrl(state.project.id).toString();
-    try { await navigator.clipboard.writeText(url); bus.emit("toast", "Project link copied"); }
-    catch { prompt("Copy project link", url); }
   });
   const openTabSelectionDialog = ({ title, description, tabs, confirmLabel, onConfirm }) => {
     if (!tabs.length || document.querySelector("#tab-selection-dialog")) return;
@@ -647,7 +580,7 @@ function renderShell() {
       const name = input.value.trim();
       if (save && name && name !== state.project.name) {
         try {
-          state.project = await api.request(`/api/projects/${state.project.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+          state.project = await api.request(`local:project/${state.project.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
           bus.emit("toast", "Project renamed");
         } catch (error) {
           bus.emit("toast", error.message);

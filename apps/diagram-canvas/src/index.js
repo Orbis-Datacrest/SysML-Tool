@@ -1254,7 +1254,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     }
     if (command?.startsWith("align-")) { mutate((next) => alignElements(next.elements, selectedIds(), command.replace("align-", ""))); return; }
     if (command === "distribute-horizontal" || command === "distribute-vertical") { mutate((next) => distributeElements(next.elements, selectedIds(), command.replace("distribute-", ""))); return; }
-    if (command === "auto-layout") { mutate((next) => autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20)); return; }
+    if (command === "auto-layout") { mutate((next) => autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20, next.relationships)); return; }
     if (command === "copy") { copySelection(); render(); return; }
     if (command === "duplicate") { copySelection(); duplicateSelection(); return; }
     if (command === "cut") copySelection();

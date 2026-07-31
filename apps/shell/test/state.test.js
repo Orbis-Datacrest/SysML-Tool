@@ -2,16 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { activateDiagramTab, createInitialState, rememberActiveTabState, resetEditorInteractionState } from "../src/app/state.js";
 
-test("initial shell state restores persisted authentication and display preferences", () => {
+test("initial shell state restores display preferences without a session", () => {
   const values = new Map([
-    ["sysml.authToken", "access"],
-    ["sysml.refreshToken", "refresh"],
     ["sysml.theme", "light"]
   ]);
   const state = createInitialState({ getItem: (key) => values.get(key) ?? null }, () => ({ matches: true }));
 
-  assert.equal(state.authToken, "access");
-  assert.equal(state.refreshToken, "refresh");
+  assert.equal("authToken" in state, false);
+  assert.equal("user" in state, false);
   assert.equal(state.settings.theme, "light");
   assert.deepEqual(state.sidebarLayout, {
     left: { open: true, width: 300 },

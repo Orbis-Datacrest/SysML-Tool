@@ -1,7 +1,7 @@
 .left-rail, .right-rail { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: visible; border-right: 1px solid var(--line); background: var(--panel); }
 .left-rail { border-right-color: var(--line); background: linear-gradient(180deg, var(--panel), var(--panel-2)); box-shadow: inset -1px 0 0 color-mix(in srgb, var(--ink), transparent 97%); scrollbar-color: var(--scrollbar-thumb) transparent; }
 .right-rail { border-right: 0; border-left: 1px solid var(--line); }
-.sidebar-header { flex: 0 0 44px; display: flex; align-items: center; gap: 9px; min-width: 0; padding: 4px; border-bottom: 1px solid var(--line); background: var(--panel); overflow: hidden; }
+.sidebar-header { flex: 0 0 48px; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel); overflow: hidden; }
 .sidebar-header strong { min-width: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .right-sidebar-header { justify-content: space-between; padding-left: 12px; }
 .sidebar-toggle { flex: 0 0 28px; width: 28px; height: 32px; padding: 0; border-color: transparent; background: transparent; }
@@ -29,7 +29,7 @@
 .sidebar-resize-handle:hover::after, .sidebar-resize-handle:focus-visible::after, .sidebar-resizing .sidebar-resize-handle::after { background: var(--accent-2); }
 .left-rail[data-open="false"] .sidebar-resize-handle, .right-rail[data-open="false"] .sidebar-resize-handle { display: none; }
 .sidebar-resizing, .sidebar-resizing * { cursor: ew-resize !important; user-select: none !important; }
-.panel { padding: 16px 14px 18px; border-bottom: 0; background: transparent; }
+.panel { padding: 18px 16px 20px; border-bottom: 0; background: transparent; }
 .panel + .panel { border-top: 1px solid color-mix(in srgb, var(--line), transparent 4%); }
 .panel h2 { display: flex; align-items: center; min-height: 22px; margin: 0 0 13px; color: color-mix(in srgb, var(--ink), var(--muted) 14%); font-size: 11px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .panel h2::after { flex: 1 1 auto; height: 1px; margin-left: 11px; content: ""; background: color-mix(in srgb, var(--line), transparent 8%); }
@@ -88,6 +88,7 @@
 .project-title-editor { border-color: var(--accent-2); background: var(--surface-input); outline: 3px solid var(--focus-ring); }
 .project-description { margin: 2px 9px 0; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .diagram-type-panel { padding-top: 16px; padding-bottom: 16px; }
+.diagram-type-panel select { width: 100%; height: 42px; border-color: var(--border-strong); background-color: var(--surface-input); }
 .validation-heading { width: 100%; min-height: 36px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; }
 .validation-heading:hover { border-color: transparent; background: var(--surface-control-hover); }
 .validation-disclosure { color: var(--muted); font-size: 12px; text-align: center; }

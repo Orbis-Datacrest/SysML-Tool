@@ -8,12 +8,12 @@ import "/apps/element-palette/src/index.js";
 import "/apps/diagram-canvas/src/index.js";
 import "/apps/import-export/src/index.js";
 import "/apps/properties-panel/src/index.js";
+import "/apps/ai-advisor/src/index.js";
 
 const state = createInitialState();
 const restored = loadLocalWorkspace();
 Object.assign(state, {
   view: "editor",
-  user: null,
   project: restored.project,
   diagrams: restored.diagrams,
   diagram: restored.diagrams.find((item) => item.id === restored.activeDiagramId) ?? restored.diagrams[0],
@@ -109,23 +109,33 @@ function redoDiagram() {
 const api = {
   async request(path, options = {}) {
     const body = options.body ? JSON.parse(options.body) : {};
-    if (path === "/api/diagrams" && options.method === "POST") {
-      queueMicrotask(schedulePersist);
+    if (path === "/api/ai" && options.method === "POST") {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? `AI request failed (${response.status}).`);
+      return payload;
+    }
+    if (path === "local:diagrams" && options.method === "POST") {
+      setTimeout(schedulePersist, 0);
       return { id: `diagram_${crypto.randomUUID()}`, project_id: state.project.id, type: body.type, name: body.name, version: 1, metadata: { grid: 20 }, elements: [], relationships: [] };
     }
-    const diagramMatch = path.match(/^\/api\/diagrams\/([^/?]+)$/);
+    const diagramMatch = path.match(/^local:diagram\/([^/?]+)$/);
     if (diagramMatch && options.method === "PATCH") {
       const diagram = state.diagrams.find((item) => item.id === diagramMatch[1]);
-      queueMicrotask(schedulePersist);
+      setTimeout(schedulePersist, 0);
       return { ...diagram, ...body, updated_at: new Date().toISOString() };
     }
     if (diagramMatch && options.method === "DELETE") {
-      queueMicrotask(schedulePersist);
+      setTimeout(schedulePersist, 0);
       return {};
     }
-    const projectMatch = path.match(/^\/api\/projects\/([^/?]+)$/);
+    const projectMatch = path.match(/^local:project\/([^/?]+)$/);
     if (projectMatch && options.method === "PATCH") {
-      queueMicrotask(schedulePersist);
+      setTimeout(schedulePersist, 0);
       return { ...state.project, ...body, updated_at: new Date().toISOString() };
     }
     throw new Error("This feature needs a backend and is not available in the local-only edition.");
@@ -146,10 +156,10 @@ async function saveMilestone() {
 
 const renderShell = createShellRenderer({
   activateDiagramTab, api, applyTheme, bus, cancelAutoSave: () => {}, escapeHtml, icons: {
-    moon: "☾", sun: "☀", save: "↓", history: "↶", share: "", ai: "✦"
+    moon: "☾", sun: "☀", save: "↓", history: "↶", ai: "✦"
   },
   loadVersionHistory: async () => {}, mountMfe, nextTheme,
-  projectUrl: () => new URL(window.location.href), redoDiagram, rememberPage,
+  redoDiagram, rememberPage,
   saveCurrentDiagram, saveMilestone, setDiagram, showDashboard: () => {}, state,
   undoDiagram, updateDiagramDraft
 });

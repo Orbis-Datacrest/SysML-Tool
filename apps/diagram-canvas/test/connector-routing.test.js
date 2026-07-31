@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nearestAnchor, relationshipRoute, routeToJumpPath } from "../src/connector-routing.js";
+import { automaticAnchorPair, nearestAnchor, relationshipRoute, routeToJumpPath } from "../src/connector-routing.js";
 
 const node = (id, x, y, width = 100, height = 80) => ({ id, x, y, width, height });
 
@@ -28,4 +28,17 @@ test("anchors can bind to ports and any side", () => {
 test("line jumps create quadratic bridge commands", () => {
   const path = routeToJumpPath([{ x: 0, y: 50 }, { x: 100, y: 50 }], [[{ x: 50, y: 0 }, { x: 50, y: 100 }]]);
   assert.match(path, / Q 50 44 56 50/);
+});
+
+test("automatic anchors follow the dominant direction between nodes", () => {
+  assert.deepEqual(automaticAnchorPair(node("a", 0, 0), node("b", 0, 200)).map(({ side }) => side), ["bottom", "top"]);
+  assert.deepEqual(automaticAnchorPair(node("a", 300, 0), node("b", 0, 0)).map(({ side }) => side), ["left", "right"]);
+});
+
+test("self connections render as a clear loop outside the node", () => {
+  const item = node("a", 100, 100);
+  const points = relationshipRoute({ source_id: "a", target_id: "a" }, [item]);
+  assert.equal(points[0].x, item.x + item.width);
+  assert.ok(points.some((point) => point.x > item.x + item.width));
+  assert.equal(points.at(-1).x, item.x + item.width);
 });

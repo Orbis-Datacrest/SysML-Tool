@@ -96,6 +96,20 @@ test("auto-layout places selected elements on a bounded grid", () => {
   assert.equal(elements.every((item) => item.x % 20 === 0 && item.y % 20 === 0), true);
 });
 
+test("auto-layout uses relationship direction to create readable layers", () => {
+  const elements = [node("target", 10, 10), node("source", 10, 10), node("peer", 10, 10)];
+  autoLayoutElements(elements, [], { width: 1000, height: 800 }, 20, [
+    { source_id: "source", target_id: "target" },
+    { source_id: "source", target_id: "peer" }
+  ]);
+  const source = elements.find((item) => item.id === "source");
+  const target = elements.find((item) => item.id === "target");
+  const peer = elements.find((item) => item.id === "peer");
+  assert.ok(source.x < target.x);
+  assert.equal(target.x, peer.x);
+  assert.notEqual(target.y, peer.y);
+});
+
 test("smart guides report nearby alignment lines", () => {
   const elements = [node("a", 10, 10), node("b", 200, 10)];
   const guides = snapLinesForMove(elements, ["a"], { left: 198, right: 298, top: 12, bottom: 72 });

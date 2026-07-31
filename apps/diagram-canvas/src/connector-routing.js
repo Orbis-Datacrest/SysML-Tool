@@ -34,6 +34,21 @@ export function nearestAnchor(node, point) {
   return { side: best.side, offset: best.offset };
 }
 
+export function automaticAnchorPair(source, target) {
+  const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
+  const targetCenter = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+  const dx = targetCenter.x - sourceCenter.x;
+  const dy = targetCenter.y - sourceCenter.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? [{ side: "right", offset: Math.max(0, Math.min(1, (targetCenter.y - source.y) / source.height)) }, { side: "left", offset: Math.max(0, Math.min(1, (sourceCenter.y - target.y) / target.height)) }]
+      : [{ side: "left", offset: Math.max(0, Math.min(1, (targetCenter.y - source.y) / source.height)) }, { side: "right", offset: Math.max(0, Math.min(1, (sourceCenter.y - target.y) / target.height)) }];
+  }
+  return dy >= 0
+    ? [{ side: "bottom", offset: Math.max(0, Math.min(1, (targetCenter.x - source.x) / source.width)) }, { side: "top", offset: Math.max(0, Math.min(1, (sourceCenter.x - target.x) / target.width)) }]
+    : [{ side: "top", offset: Math.max(0, Math.min(1, (targetCenter.x - source.x) / source.width)) }, { side: "bottom", offset: Math.max(0, Math.min(1, (sourceCenter.x - target.x) / target.width)) }];
+}
+
 function outward(point, distance = ROUTE_CLEARANCE) {
   const vectors = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
   const [dx, dy] = vectors[point.side] ?? vectors.right;
@@ -112,8 +127,15 @@ export function relationshipRoute(relationship, elements, options = {}) {
   const source = elements.find((item) => item.id === relationship.source_id);
   const target = elements.find((item) => item.id === relationship.target_id);
   if (!source || !target) return [];
-  const sourceAnchor = relationship.sourceAnchor ?? { side: "right" };
-  const targetAnchor = relationship.targetAnchor ?? { side: "left" };
+  if (source.id === target.id && !relationship.waypoints?.length) {
+    const start = anchorPoint(source, relationship.sourceAnchor ?? { side: "right", offset: 0.35 });
+    const end = anchorPoint(target, relationship.targetAnchor ?? { side: "right", offset: 0.65 });
+    const loopX = source.x + source.width + ROUTE_CLEARANCE * 2;
+    return simplify([start, { x: loopX, y: start.y }, { x: loopX, y: end.y }, end]);
+  }
+  const automatic = automaticAnchorPair(source, target);
+  const sourceAnchor = relationship.sourceAnchor ?? automatic[0];
+  const targetAnchor = relationship.targetAnchor ?? automatic[1];
   if (relationship.waypoints?.length && !options.force) return simplify([
     anchorPoint(source, sourceAnchor), ...relationship.waypoints, anchorPoint(target, targetAnchor)
   ]);

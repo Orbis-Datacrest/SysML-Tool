@@ -1,9 +1,9 @@
-.topbar { position: relative; z-index: 140; min-width: 0; height: var(--topbar-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 0 max(clamp(8px, 1.2vw, 14px), env(safe-area-inset-right)) 0 max(clamp(8px, 1.2vw, 14px), env(safe-area-inset-left)); overflow: visible; background: var(--topbar-bg); color: var(--topbar-ink); border-bottom: 1px solid var(--line); }
+.topbar { position: relative; z-index: 140; min-width: 0; height: var(--topbar-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: 0 max(clamp(12px, 1.8vw, 22px), env(safe-area-inset-right)) 0 max(clamp(12px, 1.8vw, 22px), env(safe-area-inset-left)); overflow: visible; background: color-mix(in srgb, var(--topbar-bg), transparent 2%); color: var(--topbar-ink); border-bottom: 1px solid var(--line); box-shadow: 0 6px 22px color-mix(in srgb, var(--shadow-color), transparent 58%); }
 .topbar span { color: var(--topbar-muted); }
 .topbar-left { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
 .topbar-actions { min-width: 0; flex: 0 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .topbar-actions > * { flex: 0 0 auto; }
-.topbar button, .topbar .export-button, .topbar .top-project-name, .topbar .topbar-auth > button { height: 28px; min-height: 28px; display: inline-flex; align-items: center; padding-top: 3px; padding-bottom: 3px; }
+.topbar button, .topbar .export-button, .topbar .top-project-name { height: 32px; min-height: 32px; display: inline-flex; align-items: center; padding-top: 4px; padding-bottom: 4px; }
 .share-control { position: relative; }
 .share-button { display: inline-flex; height: 32px; align-items: center; gap: 7px; padding: 0 0 0 11px; border: 0; border-radius: 16px; background: color-mix(in srgb, var(--accent-2), var(--panel) 76%); color: var(--accent-2); font-weight: 800; }
 .share-button:hover { border-color: transparent; background: color-mix(in srgb, var(--accent-2), var(--panel) 66%); color: var(--accent-2); }
@@ -43,7 +43,7 @@
 .brand-button:hover { background: var(--panel-3); border-color: transparent; color: var(--topbar-ink); }
 .icon-button { width: 32px; height: 32px; padding: 0; justify-content: center; font-size: 17px; line-height: 1; }
 .icon-button.active { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2), transparent 82%); color: var(--accent-2); }
-.save-status { min-width: 72px; color: var(--muted); font-size: 12px; }
+.save-status { width: 200px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 #project-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-project-name { display: flex; min-width: 150px; max-width: min(420px, 35vw); height: 32px; align-items: center; gap: 8px; padding: 3px 9px; border: 1px dashed color-mix(in srgb, var(--accent-2), transparent 35%); border-radius: 7px; background: color-mix(in srgb, var(--panel), transparent 15%); color: var(--ink); cursor: text; font-size: 14px; font-weight: 750; }
 .top-project-name:hover { border-style: solid; border-color: var(--accent-2); background: color-mix(in srgb, var(--panel-2), transparent 5%); }

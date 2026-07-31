@@ -107,9 +107,51 @@ export function distributeElements(elements, selectedIds, axis) {
   }
 }
 
-export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SIZE) {
+export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SIZE, relationships = []) {
   const selected = elements.filter((node) => (selectedIds.length ? selectedIds.includes(node.id) : true) && !node.locked);
   if (!selected.length) return;
+  const selectedSet = new Set(selected.map((node) => node.id));
+  const edges = relationships.filter((item) => selectedSet.has(item.source_id) && selectedSet.has(item.target_id) && item.source_id !== item.target_id);
+  if (edges.length) {
+    const incoming = new Map(selected.map((node) => [node.id, 0]));
+    const outgoing = new Map(selected.map((node) => [node.id, []]));
+    edges.forEach((edge) => {
+      incoming.set(edge.target_id, incoming.get(edge.target_id) + 1);
+      outgoing.get(edge.source_id).push(edge.target_id);
+    });
+    const layer = new Map();
+    const queue = selected.filter((node) => incoming.get(node.id) === 0).map((node) => node.id);
+    if (!queue.length) queue.push(selected[0].id);
+    queue.forEach((id) => layer.set(id, 0));
+    while (queue.length) {
+      const id = queue.shift();
+      for (const targetId of outgoing.get(id)) {
+        layer.set(targetId, Math.max(layer.get(targetId) ?? 0, (layer.get(id) ?? 0) + 1));
+        incoming.set(targetId, incoming.get(targetId) - 1);
+        if (incoming.get(targetId) === 0) queue.push(targetId);
+      }
+    }
+    selected.forEach((node) => { if (!layer.has(node.id)) layer.set(node.id, Math.max(0, ...layer.values()) + 1); });
+    const groups = new Map();
+    selected.forEach((node) => {
+      const index = layer.get(node.id);
+      if (!groups.has(index)) groups.set(index, []);
+      groups.get(index).push(node);
+    });
+    const left = Math.max(grid * 2, Math.min(...selected.map((node) => node.x)));
+    const top = Math.max(grid * 2, Math.min(...selected.map((node) => node.y)));
+    const columnWidth = Math.max(...selected.map((node) => node.width)) + grid * 4;
+    for (const [column, nodes] of [...groups.entries()].sort(([a], [b]) => a - b)) {
+      let y = top;
+      nodes.sort((a, b) => a.y - b.y || a.name.localeCompare(b.name));
+      for (const node of nodes) {
+        node.x = clamp(snap(left + column * columnWidth, grid), 0, canvas.width - node.width);
+        node.y = clamp(snap(y, grid), 0, canvas.height - node.height);
+        y += node.height + grid * 3;
+      }
+    }
+    return;
+  }
   const columns = Math.max(1, Math.ceil(Math.sqrt(selected.length * 1.35)));
   const maxWidth = Math.max(...selected.map((node) => node.width));
   const maxHeight = Math.max(...selected.map((node) => node.height));
