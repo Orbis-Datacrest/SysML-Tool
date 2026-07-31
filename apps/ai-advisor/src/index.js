@@ -16,90 +16,122 @@ function previewOperation(operation) {
 }
 
 registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
-  let proposal = null;
-  let patch = null;
-  let selected = new Set();
+  let turns = [];
   let task = "generate";
   let draft = "";
   let busy = false;
-  let error = "";
   let disposed = false;
   let requestSequence = 0;
 
-  const emitPreview = () => bus.emit("ai:preview", patch ? {
-    operations: patch.operations.map(previewOperation).filter((item) => selected.has(item.operation_id))
-  } : null);
+  const liveTurn = () => turns.find((turn) => turn.role === "assistant" && turn.resolved === null);
+
+  const emitPreview = () => {
+    const turn = liveTurn();
+    bus.emit("ai:preview", turn ? { operations: turn.patch.operations.map(previewOperation).filter((item) => turn.selected.has(item.operation_id)) } : null);
+  };
+
+  function renderAssistantTurn(turn) {
+    if (turn.error) return `<div class="ai-bubble ai-bubble-assistant ai-bubble-error" role="alert">${escapeHtml(turn.error)}</div>`;
+    const operations = turn.proposal.operations;
+    const resolvedTag = turn.resolved === "applied" ? '<span class="ai-turn-status applied">Applied</span>' : turn.resolved === "discarded" ? '<span class="ai-turn-status discarded">Not applied</span>' : "";
+    return `<div class="ai-bubble ai-bubble-assistant" data-turn="${turn.id}">
+      <div class="ai-bubble-summary">${escapeHtml(turn.proposal.summary)}${resolvedTag}</div>
+      ${turn.proposal.assumptions?.length ? `<ul class="ai-assumptions">${turn.proposal.assumptions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      ${turn.proposal.clarification_questions?.length ? `<ul class="ai-clarification">${turn.proposal.clarification_questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      ${operations.length ? `<div class="ai-operation-list">${operations.map((operation) => `<label class="ai-operation ${turn.selected.has(operation.id) ? "accepted" : ""} ${turn.resolved ? "locked" : ""}"><input type="checkbox" data-turn="${turn.id}" data-operation="${escapeHtml(operation.id)}" ${turn.selected.has(operation.id) ? "checked" : ""} ${turn.resolved ? "disabled" : ""}><span><strong>${escapeHtml(operation.rationale || operation.type)}</strong><small>${escapeHtml(operation.type.replaceAll("_", " "))}</small></span></label>`).join("")}</div>` : ""}
+      ${turn.resolved === null ? `<div class="ai-actions"><button data-discard="${turn.id}" type="button">Discard</button><button data-apply="${turn.id}" class="primary" type="button" ${turn.selected.size ? "" : "disabled"}>Apply ${turn.selected.size || ""}</button></div>` : ""}
+    </div>`;
+  }
 
   function render() {
     if (disposed) return;
-    const operations = proposal?.operations ?? [];
     element.innerHTML = `<div class="ai-shell">
-      <header class="ai-header"><span>Modeling assistant</span><h2>AI Advisor</h2><p>Generate or review the active tab. Changes stay local until you approve them.</p></header>
-      <div class="ai-results">${error ? `<p class="ai-error" role="alert">${escapeHtml(error)}</p>` : ""}
-      ${proposal ? `<section class="ai-proposal" aria-live="polite">
-        <h3>${escapeHtml(proposal.summary)}</h3>
-        ${proposal.assumptions?.length ? `<ul class="ai-assumptions">${proposal.assumptions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
-        ${proposal.clarification_questions?.length ? `<p class="ai-clarification">${escapeHtml(proposal.clarification_questions[0])}</p>` : ""}
-        <div class="ai-operation-list">${operations.map((operation) => `<label class="ai-operation ${selected.has(operation.id) ? "accepted" : ""}"><input type="checkbox" data-operation="${escapeHtml(operation.id)}" ${selected.has(operation.id) ? "checked" : ""}><span><strong>${escapeHtml(operation.rationale || operation.type)}</strong><small>${escapeHtml(operation.type.replaceAll("_", " "))}</small></span></label>`).join("") || `<p>No model changes were proposed.</p>`}</div>
-        <div class="ai-actions"><button id="discard-ai" type="button">Discard</button><button id="apply-ai" class="primary" type="button" ${selected.size && !busy ? "" : "disabled"}>Apply ${selected.size || ""}</button></div>
-      </section>` : ""}</div>
+      <header class="ai-header"><span>Modeling assistant</span><h2>AI Advisor</h2><p>Chat about the active tab. Nothing changes on the diagram until you approve it, and this conversation isn't saved anywhere.</p></header>
+      <div class="ai-results" id="ai-thread" aria-live="polite">
+        ${turns.length ? turns.map((turn) => turn.role === "user"
+          ? `<div class="ai-bubble ai-bubble-user">${escapeHtml(turn.text)}</div>`
+          : renderAssistantTurn(turn)).join("") : `<p class="ai-empty">Ask for a diagram, or describe the change you want, in plain language.</p>`}
+        ${busy ? `<div class="ai-bubble ai-bubble-assistant ai-bubble-pending">Thinking…</div>` : ""}
+      </div>
       <footer class="ai-compose">
         <div class="ai-task-switch"><button data-task="generate" class="${task === "generate" ? "active" : ""}">Generate</button><button data-task="review" class="${task === "review" ? "active" : ""}">Review</button></div>
         <textarea id="ai-prompt" maxlength="6000" placeholder="${task === "generate" ? "Describe the diagram or changes you need…" : "What should the review focus on?"}">${escapeHtml(draft)}</textarea>
-        <button id="ask-ai" class="primary" ${busy ? "disabled" : ""}>${busy ? "Contacting AI…" : "Preview changes"}</button>
+        <button id="ask-ai" class="primary" ${busy ? "disabled" : ""}>${busy ? "Contacting AI…" : "Send"}</button>
       </footer>
     </div>`;
 
+    const thread = element.querySelector("#ai-thread");
+    if (thread) thread.scrollTop = thread.scrollHeight;
+
     element.querySelector("#ai-prompt")?.addEventListener("input", (event) => { draft = event.target.value; });
-    element.querySelectorAll("[data-task]").forEach((button) => button.addEventListener("click", () => { task = button.dataset.task; error = ""; render(); }));
+    element.querySelectorAll("[data-task]").forEach((button) => button.addEventListener("click", () => { task = button.dataset.task; render(); }));
     element.querySelectorAll("[data-operation]").forEach((input) => input.addEventListener("change", () => {
-      input.checked ? selected.add(input.dataset.operation) : selected.delete(input.dataset.operation);
+      const turn = turns.find((item) => item.id === input.dataset.turn);
+      if (!turn || turn.resolved !== null) return;
+      input.checked ? turn.selected.add(input.dataset.operation) : turn.selected.delete(input.dataset.operation);
       emitPreview(); render();
     }));
-    element.querySelector("#discard-ai")?.addEventListener("click", () => {
-      proposal = null; patch = null; selected.clear(); emitPreview(); render();
-    });
-    element.querySelector("#apply-ai")?.addEventListener("click", () => {
-      const diagramId = proposal.diagramId;
-      if (state.diagram?.id !== diagramId) { error = "The active tab changed. Request a new proposal for this tab."; render(); return; }
+    element.querySelectorAll("[data-discard]").forEach((button) => button.addEventListener("click", () => {
+      const turn = turns.find((item) => item.id === button.dataset.discard);
+      if (!turn) return;
+      turn.resolved = "discarded"; emitPreview(); render();
+    }));
+    element.querySelectorAll("[data-apply]").forEach((button) => button.addEventListener("click", () => {
+      const turn = turns.find((item) => item.id === button.dataset.apply);
+      if (!turn) return;
+      if (state.diagram?.id !== turn.diagramId) { turn.error = "The active tab changed. Ask again for this tab."; turn.proposal = null; render(); return; }
       try {
-        const operations = selectMaterializedOperations(patch, selected);
+        const operations = selectMaterializedOperations(turn.patch, turn.selected);
         const next = applyPatch(state.diagram, { operations });
         autoLayoutElements(next.elements, [], { width: 5000, height: 4000 }, 20, next.relationships);
-        proposal = null; patch = null; selected.clear(); emitPreview();
+        turn.resolved = "applied"; emitPreview();
         setDiagram(next);
         bus.emit("toast", "AI changes applied and arranged.");
-      } catch (caught) { error = caught.message; render(); }
-    });
+        render();
+      } catch (caught) { turn.error = caught.message; render(); }
+    }));
     element.querySelector("#ask-ai")?.addEventListener("click", async () => {
       const prompt = draft.trim();
-      if (task === "generate" && !prompt) { error = "Describe what you want to create."; render(); return; }
+      if (task === "generate" && !prompt) {
+        turns.push({ id: createId("turn"), role: "assistant", proposal: null, patch: null, selected: new Set(), diagramId: state.diagram?.id, resolved: "discarded", error: "Describe what you want to create." });
+        render();
+        return;
+      }
+      const pending = liveTurn();
+      if (pending) pending.resolved = "discarded";
+      const history = turns.map((turn) => ({ role: turn.role, text: turn.role === "user" ? turn.text : (turn.error ?? turn.proposal?.summary ?? "") }));
+      turns.push({ id: createId("turn"), role: "user", text: prompt || (task === "review" ? "Review this diagram." : prompt) });
+      draft = "";
       const sequence = ++requestSequence;
       const diagramId = state.diagram.id;
-      busy = true; error = ""; proposal = null; patch = null; selected.clear(); emitPreview(); render();
+      busy = true; emitPreview(); render();
       try {
         const context = buildAiContext({
           task, prompt, diagram: state.diagram, selectedElementIds: state.selectedElementIds,
-          repository: state.modelRepository
+          repository: state.modelRepository, history
         });
         const response = await api.request("/api/ai", { method: "POST", body: JSON.stringify({ context }) });
         if (disposed || sequence !== requestSequence) return;
         if (state.diagram?.id !== diagramId) throw new Error("The active tab changed while AI was responding. Nothing was applied.");
         const validated = validateAiProposal(response.proposal ?? response, state.diagram.type);
         validateProposalReferences(state.diagram, validated);
-        patch = materializeSemanticProposal(state.diagram, validated, createId);
-        proposal = { ...validated, diagramId };
-        selected = new Set(validated.operations.map((operation) => operation.id));
+        const patch = materializeSemanticProposal(state.diagram, validated, createId);
+        turns.push({ id: createId("turn"), role: "assistant", proposal: validated, patch, selected: new Set(validated.operations.map((operation) => operation.id)), diagramId, resolved: null, error: null });
         emitPreview();
-      } catch (caught) { error = caught.message; }
-      finally { if (!disposed && sequence === requestSequence) { busy = false; render(); } }
+      } catch (caught) {
+        if (disposed || sequence !== requestSequence) return;
+        turns.push({ id: createId("turn"), role: "assistant", proposal: null, patch: null, selected: new Set(), diagramId, resolved: "discarded", error: caught.message });
+      } finally { if (!disposed && sequence === requestSequence) { busy = false; render(); } }
     });
   }
 
   render();
+  let currentDiagramId = state.diagram?.id;
   const unsubscribeDiagram = bus.on("diagram:changed", (diagram) => {
+    if (diagram?.id === currentDiagramId) return;
+    currentDiagramId = diagram?.id;
     requestSequence += 1;
-    busy = false; proposal = null; patch = null; selected.clear(); error = "";
+    busy = false; turns = [];
     emitPreview(); render();
   });
   return () => {

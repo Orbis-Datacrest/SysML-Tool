@@ -64,7 +64,7 @@ export function validateProposalReferences(diagram, proposal) {
     }
   }
   for (const operation of proposal.operations) {
-    if (["update_element", "remove_element"].includes(operation.type) && !elementIds.has(operation.target_id)) throw new Error(`Element does not exist: ${operation.target_id}`);
+    if (["update_element", "remove_element"].includes(operation.type) && !elementIds.has(operation.target_id)) throw new Error(`"${operation.target_id}" isn't on the diagram yet, so it can't be changed — apply it first, or ask again describing the full element.`);
     if (operation.type === "remove_relationship" && !relationshipIds.has(operation.relationship_id)) throw new Error(`Relationship does not exist: ${operation.relationship_id}`);
     if (operation.type === "add_relationship" && (!refs.has(operation.relationship.source_ref) || !refs.has(operation.relationship.target_ref))) throw new Error(`Relationship ${operation.id} references an unknown element.`);
   }
