@@ -115,9 +115,19 @@ registerMfe("element-palette", (element, { state, bus }) => {
       <h2>Elements</h2>
       <label class="palette-search"><span>Find any element</span><input id="element-search" type="search" value="${searchQuery.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character])}" placeholder="Search all diagram types…" autocomplete="off"></label>
       ${normalizedQuery ? `<section class="palette-search-results" aria-live="polite"><div class="palette-results-heading"><strong>Search results</strong><span>${searchResults.length}</span></div>${searchResults.length ? paletteItems(searchResults) : `<p class="palette-empty">No elements match “${searchQuery.replace(/[&<>'"]/g, "")}”. Try a name such as Actor, Block, or Requirement.</p>`}</section>` : `
-        <details open><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
-        <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>`}
+        <details id="palette-section-common" ${state.paletteExpanded.common ? "open" : ""}><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
+        <details id="palette-section-diagram" ${state.paletteExpanded.diagramSpecific ? "open" : ""}><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>`}
     </div>`;
+    if (!normalizedQuery) {
+      element.querySelector("#palette-section-common").addEventListener("toggle", (event) => {
+        state.paletteExpanded.common = event.target.open;
+        try { localStorage.setItem("sysml.paletteExpanded.common", String(event.target.open)); } catch {}
+      });
+      element.querySelector("#palette-section-diagram").addEventListener("toggle", (event) => {
+        state.paletteExpanded.diagramSpecific = event.target.open;
+        try { localStorage.setItem("sysml.paletteExpanded.diagramSpecific", String(event.target.open)); } catch {}
+      });
+    }
     const searchInput = element.querySelector("#element-search");
     searchInput.addEventListener("input", () => {
       searchQuery = searchInput.value;

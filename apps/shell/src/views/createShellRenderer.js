@@ -46,7 +46,6 @@ function renderShell() {
             <section id="project-import" class="project-import"></section>
             <section id="project-explorer"></section>
             <section id="element-palette"></section>
-            <section id="properties-panel"></section>
             <section id="project-validation" class="sidebar-bottom-panel"></section>
           </div>
           <div class="sidebar-resize-handle" data-resize-sidebar="left" role="separator" aria-label="Resize project tools" aria-orientation="vertical" aria-valuemin="${SIDEBAR_CONSTRAINTS.left.minimum}" aria-valuemax="${SIDEBAR_CONSTRAINTS.left.maximum}" aria-valuenow="${state.sidebarLayout.left.width}" tabindex="0"></div>
@@ -153,7 +152,6 @@ function renderShell() {
   if (state.view === "editor") {
     mount("project-explorer", document.querySelector("#project-explorer"));
     mount("element-palette", document.querySelector("#element-palette"));
-    mount("properties-panel", document.querySelector("#properties-panel"));
     mount("project-validation", document.querySelector("#project-validation"));
     mount("diagram-canvas", document.querySelector("#diagram-canvas"));
     mount("ai-advisor", document.querySelector("#ai-advisor"));

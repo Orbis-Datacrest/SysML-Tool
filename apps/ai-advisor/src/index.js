@@ -17,7 +17,6 @@ function previewOperation(operation) {
 
 registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
   let turns = [];
-  let task = "generate";
   let draft = "";
   let busy = false;
   let disposed = false;
@@ -39,7 +38,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
       ${turn.proposal.assumptions?.length ? `<ul class="ai-assumptions">${turn.proposal.assumptions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
       ${turn.proposal.clarification_questions?.length ? `<ul class="ai-clarification">${turn.proposal.clarification_questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
       ${operations.length ? `<div class="ai-operation-list">${operations.map((operation) => `<label class="ai-operation ${turn.selected.has(operation.id) ? "accepted" : ""} ${turn.resolved ? "locked" : ""}"><input type="checkbox" data-turn="${turn.id}" data-operation="${escapeHtml(operation.id)}" ${turn.selected.has(operation.id) ? "checked" : ""} ${turn.resolved ? "disabled" : ""}><span><strong>${escapeHtml(operation.rationale || operation.type)}</strong><small>${escapeHtml(operation.type.replaceAll("_", " "))}</small></span></label>`).join("")}</div>` : ""}
-      ${turn.resolved === null ? `<div class="ai-actions"><button data-discard="${turn.id}" type="button">Discard</button><button data-apply="${turn.id}" class="primary" type="button" ${turn.selected.size ? "" : "disabled"}>Apply ${turn.selected.size || ""}</button></div>` : ""}
+      ${turn.resolved === null && operations.length ? `<div class="ai-actions"><button data-discard="${turn.id}" type="button">Discard</button><button data-apply="${turn.id}" class="primary" type="button" ${turn.selected.size ? "" : "disabled"}>Apply ${turn.selected.size || ""}</button></div>` : ""}
     </div>`;
   }
 
@@ -54,8 +53,8 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
         ${busy ? `<div class="ai-bubble ai-bubble-assistant ai-bubble-pending">Thinking…</div>` : ""}
       </div>
       <footer class="ai-compose">
-        <div class="ai-task-switch"><button data-task="generate" class="${task === "generate" ? "active" : ""}">Generate</button><button data-task="review" class="${task === "review" ? "active" : ""}">Review</button></div>
-        <textarea id="ai-prompt" maxlength="6000" placeholder="${task === "generate" ? "Describe the diagram or changes you need…" : "What should the review focus on?"}">${escapeHtml(draft)}</textarea>
+        <div class="ai-task-switch"><button data-task="generate" class="${state.aiAdvisorTask === "generate" ? "active" : ""}">Generate</button><button data-task="review" class="${state.aiAdvisorTask === "review" ? "active" : ""}">Review</button></div>
+        <textarea id="ai-prompt" maxlength="6000" placeholder="${state.aiAdvisorTask === "generate" ? "Describe the diagram or changes you need…" : "What should the review focus on?"}">${escapeHtml(draft)}</textarea>
         <button id="ask-ai" class="primary" ${busy ? "disabled" : ""}>${busy ? "Contacting AI…" : "Send"}</button>
       </footer>
     </div>`;
@@ -64,7 +63,11 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
     if (thread) thread.scrollTop = thread.scrollHeight;
 
     element.querySelector("#ai-prompt")?.addEventListener("input", (event) => { draft = event.target.value; });
-    element.querySelectorAll("[data-task]").forEach((button) => button.addEventListener("click", () => { task = button.dataset.task; render(); }));
+    element.querySelectorAll("[data-task]").forEach((button) => button.addEventListener("click", () => {
+      state.aiAdvisorTask = button.dataset.task;
+      try { localStorage.setItem("sysml.aiAdvisorTask", state.aiAdvisorTask); } catch {}
+      render();
+    }));
     element.querySelectorAll("[data-operation]").forEach((input) => input.addEventListener("change", () => {
       const turn = turns.find((item) => item.id === input.dataset.turn);
       if (!turn || turn.resolved !== null) return;
@@ -92,7 +95,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
     }));
     element.querySelector("#ask-ai")?.addEventListener("click", async () => {
       const prompt = draft.trim();
-      if (task === "generate" && !prompt) {
+      if (state.aiAdvisorTask === "generate" && !prompt) {
         turns.push({ id: createId("turn"), role: "assistant", proposal: null, patch: null, selected: new Set(), diagramId: state.diagram?.id, resolved: "discarded", error: "Describe what you want to create." });
         render();
         return;
@@ -100,14 +103,14 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
       const pending = liveTurn();
       if (pending) pending.resolved = "discarded";
       const history = turns.map((turn) => ({ role: turn.role, text: turn.role === "user" ? turn.text : (turn.error ?? turn.proposal?.summary ?? "") }));
-      turns.push({ id: createId("turn"), role: "user", text: prompt || (task === "review" ? "Review this diagram." : prompt) });
+      turns.push({ id: createId("turn"), role: "user", text: prompt || (state.aiAdvisorTask === "review" ? "Review this diagram." : prompt) });
       draft = "";
       const sequence = ++requestSequence;
       const diagramId = state.diagram.id;
       busy = true; emitPreview(); render();
       try {
         const context = buildAiContext({
-          task, prompt, diagram: state.diagram, selectedElementIds: state.selectedElementIds,
+          task: state.aiAdvisorTask, prompt, diagram: state.diagram, selectedElementIds: state.selectedElementIds,
           repository: state.modelRepository, history
         });
         const response = await api.request("/api/ai", { method: "POST", body: JSON.stringify({ context }) });

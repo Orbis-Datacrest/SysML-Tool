@@ -40,7 +40,6 @@ npm run build
 - `apps/diagram-canvas` — diagram rendering, editing, routing, and geometry
 - `apps/element-palette` — UML/SysML element palette
 - `apps/project-explorer` — project and diagram navigation
-- `apps/properties-panel` — selected-item properties
 - `apps/import-export` — JSON import and downloadable exports
 - `packages/model-core` — model validation and domain utilities
 - `packages/ui` — micro-frontend registration utilities

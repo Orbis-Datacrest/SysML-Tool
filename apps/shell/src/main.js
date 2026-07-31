@@ -7,7 +7,6 @@ import "/apps/project-explorer/src/index.js";
 import "/apps/element-palette/src/index.js";
 import "/apps/diagram-canvas/src/index.js";
 import "/apps/import-export/src/index.js";
-import "/apps/properties-panel/src/index.js";
 import "/apps/ai-advisor/src/index.js";
 
 const state = createInitialState();
