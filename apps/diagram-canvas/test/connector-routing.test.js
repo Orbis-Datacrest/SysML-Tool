@@ -35,6 +35,16 @@ test("automatic anchors follow the dominant direction between nodes", () => {
   assert.deepEqual(automaticAnchorPair(node("a", 300, 0), node("b", 0, 0)).map(({ side }) => side), ["left", "right"]);
 });
 
+test("automatic relationship endpoints terminate exactly on both element borders", () => {
+  const source = node("a", 20, 40, 120, 80);
+  const target = node("b", 320, 60, 140, 100);
+  const points = relationshipRoute({ source_id: source.id, target_id: target.id }, [source, target]);
+  assert.equal(points[0].x, source.x + source.width);
+  assert.ok(points[0].y >= source.y && points[0].y <= source.y + source.height);
+  assert.equal(points.at(-1).x, target.x);
+  assert.ok(points.at(-1).y >= target.y && points.at(-1).y <= target.y + target.height);
+});
+
 test("self connections render as a clear loop outside the node", () => {
   const item = node("a", 100, 100);
   const points = relationshipRoute({ source_id: "a", target_id: "a" }, [item]);

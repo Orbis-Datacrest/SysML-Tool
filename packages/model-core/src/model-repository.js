@@ -141,6 +141,7 @@ export function validateRelationshipCompatibility(relationship, elements) {
   const diagnostics = [];
   if (!source) diagnostics.push(`Missing source ${relationship.source_id}`);
   if (!target) diagnostics.push(`Missing target ${relationship.target_id}`);
+  if (source?.kind === "text-label" || target?.kind === "text-label") diagnostics.push("Text elements cannot have connections");
   if (relationship.kind === "satisfy" && target?.kind !== "requirement") diagnostics.push("Satisfy must target a requirement");
   if (relationship.kind === "verify" && target?.kind !== "requirement") diagnostics.push("Verify must target a requirement");
   if (requirementRelationshipKinds.includes(relationship.kind) && relationship.kind !== "trace" && ![source?.kind, target?.kind].includes("requirement")) diagnostics.push(`${relationship.kind} must involve a requirement`);

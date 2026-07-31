@@ -9,10 +9,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "node --watch services/dev-server/src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch services/dev-server/src/index.js",
     "build": "node scripts/build.mjs",
     "test": "node --test",
-    "start": "node services/dev-server/src/index.js",
+    "start": "node --env-file-if-exists=.env services/dev-server/src/index.js",
     "lint": "node scripts/validate-workspace.mjs"
   },
   "devDependencies": {},

@@ -33,11 +33,6 @@ const humanKinds = new Set(["actor"]);
 const timelineKinds = new Set(["lifeline", "activation", "message", "time-constraint", "duration-constraint", "state-invariant"]);
 const packageKinds = new Set(["package", "model", "profile", "view", "viewpoint"]);
 const noteKinds = new Set(["note", "comment", "rationale", "problem"]);
-const textElements = [
-  ["H1", 32, "bold"], ["H2", 28, "bold"], ["H3", 24, "bold"], ["H4", 20, "bold"],
-  ["H5", 18, "bold"], ["H6", 16, "bold"], ["Paragraph", 13, "normal"]
-].map(([label, textSize, textStyle]) => ({ type: "node", kind: "text-label", label, textPreset: { textSize, textStyle } }));
-
 function labelFor(kind) {
   return elementLabels[kind] ?? kind.split("-").map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ");
 }
@@ -106,7 +101,7 @@ registerMfe("element-palette", (element, { state, bus }) => {
     const diagramType = diagramCatalog.find((item) => item.value === state.diagram?.type) ?? diagramCatalog[0];
     const commonNodes = commonElements.filter((item) => item.type === "node");
     const diagramNodes = diagramType.palette.filter((item) => item.type === "node");
-    const currentKeys = new Set([...textElements, ...commonNodes, ...diagramNodes].map((item) => `${item.kind}|${item.variant ?? ""}|${item.label}`));
+    const currentKeys = new Set([...commonNodes, ...diagramNodes].map((item) => `${item.kind}|${item.variant ?? ""}|${item.label}`));
     const discovered = new Map();
     for (const source of diagramCatalog) {
       for (const item of source.palette.filter((candidate) => candidate.type === "node")) {
@@ -120,7 +115,6 @@ registerMfe("element-palette", (element, { state, bus }) => {
       <h2>Elements</h2>
       <label class="palette-search"><span>Find any element</span><input id="element-search" type="search" value="${searchQuery.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character])}" placeholder="Search all diagram types…" autocomplete="off"></label>
       ${normalizedQuery ? `<section class="palette-search-results" aria-live="polite"><div class="palette-results-heading"><strong>Search results</strong><span>${searchResults.length}</span></div>${searchResults.length ? paletteItems(searchResults) : `<p class="palette-empty">No elements match “${searchQuery.replace(/[&<>'"]/g, "")}”. Try a name such as Actor, Block, or Requirement.</p>`}</section>` : `
-        <details open><summary><span>Text</span><span class="palette-count">${textElements.length}</span></summary>${paletteItems(textElements)}</details>
         <details open><summary><span>Common</span><span class="palette-count">${commonNodes.length}</span></summary>${paletteItems(commonNodes)}</details>
         <details open><summary><span>Diagram-specific</span><span class="palette-count">${diagramNodes.length}</span></summary>${paletteItems(diagramNodes)}</details>`}
     </div>`;
@@ -133,7 +127,7 @@ registerMfe("element-palette", (element, { state, bus }) => {
       nextInput.setSelectionRange(searchQuery.length, searchQuery.length);
     });
     element.querySelectorAll("[data-kind]").forEach((button) => {
-      const candidates = [...textElements, ...commonNodes, ...diagramNodes, ...searchResults];
+      const candidates = [...commonNodes, ...diagramNodes, ...searchResults];
       const item = candidates.find(({ kind, type, variant, label }) => kind === button.dataset.kind && type === button.dataset.paletteType && (variant ?? "") === button.dataset.variant && label === button.dataset.label);
       const detail = (clientY = button.getBoundingClientRect().top + button.offsetHeight / 2) => ({ ...item, crossDiagram: button.dataset.crossDiagram === "true", preview: elementPreview(item.shape ?? item.kind, item.variant), clientY });
       button.addEventListener("mouseenter", (event) => { if (!pointerDragging) bus.emit("palette:hover", detail(event.clientY)); });

@@ -2,6 +2,7 @@ const node = (kind, label, shape = kind, variant) => ({ type: "node", kind, labe
 const relationship = (kind, label, shape = kind) => ({ type: "relationship", kind, label, shape });
 
 export const commonElements = [
+  node("text-label", "Text"),
   node("diagram-frame", "Diagram Frame", "frame"),
   node("note", "Note / Comment", "note"),
   relationship("note-connector", "Anchor Link", "dashed-line"),
@@ -16,7 +17,7 @@ const definitions = [
     node("interface", "Interface"), node("template-class", "Template Class"), node("component", "Component"),
     node("nary-association", "N-ary Association"), node("object", "Object 1"), node("object-compact", "Object 2"),
     node("divider-vertical", "Divider (Vertical)"), node("self-association", "Self Association"),
-    node("frame-fragment", "Frame / Fragment"), node("callout", "Callout"), node("text-label", "Text Label"),
+    node("frame-fragment", "Frame / Fragment"), node("callout", "Callout"),
     node("symbol-braces", "Symbol { }"), node("symbol-guillemets", "Symbol << >>"),
     relationship("generalization", "Generalization"),
     relationship("association", "Association"), relationship("aggregation", "Aggregation"), relationship("composition", "Composition")

@@ -145,6 +145,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   }
 
   const selectedIds = () => state.selectedElementIds ?? [];
+  const isConnectableNode = (node) => Boolean(node && node.kind !== "text-label");
   const currentTheme = () => document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const themeDefaultNodeStyle = (kind) => ({
     ...defaultNodeStyle,
@@ -317,11 +318,18 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const bounds = selectionBounds(diagram.elements, selectedIds());
     if (!bounds) return null;
     const rect = element.getBoundingClientRect();
+    const viewportBounds = {
+      left: rect.left + bounds.left * zoom - element.scrollLeft,
+      top: rect.top + bounds.top * zoom - element.scrollTop,
+      right: rect.left + bounds.right * zoom - element.scrollLeft,
+      bottom: rect.top + bounds.bottom * zoom - element.scrollTop
+    };
+    if (viewportBounds.right < rect.left || viewportBounds.left > rect.right || viewportBounds.bottom < rect.top || viewportBounds.top > rect.bottom) return null;
     const width = Math.min(surfaceWidth, Math.max(0, rect.width - 16));
     const height = Math.min(surfaceHeight, Math.max(0, rect.height - 16));
     return {
-      x: clamp(rect.left + bounds.left * zoom - element.scrollLeft, rect.left + 8, rect.right - width - 8),
-      y: clamp(rect.top + bounds.top * zoom - element.scrollTop - height, rect.top + 8, rect.bottom - height - 8)
+      x: clamp(viewportBounds.left, rect.left + 8, rect.right - width - 8),
+      y: clamp(viewportBounds.top - height, rect.top + 8, rect.bottom - height - 8)
     };
   }
 
@@ -330,26 +338,49 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (!toolbar || !state.diagram) return;
     // Measure the rendered toolbar; guessed widths caused clipping beside open sidebars.
     const position = toolbarPosition(state.diagram, toolbar.offsetWidth, toolbar.offsetHeight);
-    if (!position) return;
-    runtimeStyles.set("format-toolbar-position", ".format-toolbar", { left: `${position.x}px`, top: `${position.y}px` });
+    if (!position) {
+      runtimeStyles.set("format-toolbar-position", ".format-toolbar", { visibility: "hidden" });
+      return;
+    }
+    runtimeStyles.set("format-toolbar-position", ".format-toolbar", { left: `${position.x}px`, top: `${position.y}px`, visibility: "visible" });
   }
 
   function positionPointerSurface(selector, preferred) {
     const surface = element.querySelector(selector);
     if (!surface || !preferred) return;
     const rect = element.getBoundingClientRect();
+    if (preferred.x < rect.left || preferred.x > rect.right || preferred.y < rect.top || preferred.y > rect.bottom) {
+      runtimeStyles.set(`surface-${selector}`, selector, { visibility: "hidden" });
+      return;
+    }
     const maximumX = Math.max(rect.left + 8, rect.right - surface.offsetWidth - 8);
     const maximumY = Math.max(rect.top + 8, rect.bottom - surface.offsetHeight - 8);
     runtimeStyles.set(`surface-${selector}`, selector, {
       left: `${clamp(preferred.x, rect.left + 8, maximumX)}px`,
-      top: `${clamp(preferred.y, rect.top + 8, maximumY)}px`
+      top: `${clamp(preferred.y, rect.top + 8, maximumY)}px`,
+      visibility: "visible"
     });
+  }
+
+  function relationshipSurfaceAnchor() {
+    const relationship = state.diagram?.relationships.find((item) => item.id === state.selectedRelationshipId);
+    if (!relationship) return null;
+    const point = pointAlongRoute(relationshipRoute(relationship, state.diagram.elements), 0.5);
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + point.x * zoom - element.scrollLeft + 10, y: rect.top + point.y * zoom - element.scrollTop + 10 };
+  }
+
+  function contextSurfaceAnchor() {
+    const bounds = selectionBounds(state.diagram?.elements ?? [], selectedIds());
+    if (!bounds) return null;
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + bounds.right * zoom - element.scrollLeft + 10, y: rect.top + bounds.top * zoom - element.scrollTop };
   }
 
   function positionFloatingSurfaces() {
     positionFormattingToolbar();
-    positionPointerSurface(".relationship-toolbar", relationshipToolbar);
-    positionPointerSurface(".canvas-context-menu", contextMenu);
+    positionPointerSurface(".relationship-toolbar", relationshipSurfaceAnchor());
+    positionPointerSurface(".canvas-context-menu", contextSurfaceAnchor());
     positionCommentSurfaces();
     positionShortcutHelp();
   }
@@ -525,12 +556,26 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     const selected = diagram.elements.filter((node) => selectedIds().includes(node.id));
     if (!selected.length) return "";
     const style = nodeStyle(selected[0]);
+    const textOnly = selected.every((node) => node.kind === "text-label");
+    const textPreset = style.textStyle === "normal" && style.textSize === 13 ? "paragraph"
+      : style.textStyle === "bold" && [32, 28, 24, 20, 18, 16].includes(style.textSize) ? `h${[32, 28, 24, 20, 18, 16].indexOf(style.textSize) + 1}`
+      : "";
     return `<div class="format-toolbar" aria-label="${selected.length > 1 ? "Selection" : "Element"} formatting toolbar">
       ${selected.length > 1 ? `<span class="selection-count" title="Formatting changes apply to every selected element">${selected.length} selected · apply to all</span>` : ""}
       <div class="format-toolbar-row color-toolbar-row">
         <span class="format-field" title="Border color">Border ${renderColorControl({ value: style.borderColor, label: "Border color", styleProperty: "borderColor" })}</span>
         <span class="format-field" title="Fill and background color">Fill ${renderColorControl({ value: style.fillColor, label: "Fill color", styleProperty: "fillColor" })}</span>
         <span class="format-field" title="Text color">Text ${renderColorControl({ value: style.textColor, label: "Text color", styleProperty: "textColor" })}</span>
+        ${textOnly ? `<label title="Text heading level">Heading <select data-text-preset>
+          <option value="" ${textPreset === "" ? "selected" : ""}>Custom</option>
+          <option value="h1" ${textPreset === "h1" ? "selected" : ""}>H1</option>
+          <option value="h2" ${textPreset === "h2" ? "selected" : ""}>H2</option>
+          <option value="h3" ${textPreset === "h3" ? "selected" : ""}>H3</option>
+          <option value="h4" ${textPreset === "h4" ? "selected" : ""}>H4</option>
+          <option value="h5" ${textPreset === "h5" ? "selected" : ""}>H5</option>
+          <option value="h6" ${textPreset === "h6" ? "selected" : ""}>H6</option>
+          <option value="paragraph" ${textPreset === "paragraph" ? "selected" : ""}>Paragraph</option>
+        </select></label>` : ""}
       </div>
       <div class="format-toolbar-row style-toolbar-row">
         <label title="Border thickness">Line <select data-style="borderWidth">${[1, 2, 3, 4].map((width) => `<option value="${width}" ${style.borderWidth === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
@@ -739,7 +784,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           runtimeStyles.set(`node-${node.id}`, `.diagram-node[data-node="${runtimeStyles.escape(node.id)}"]`, { left: `${node.x}px`, top: `${node.y}px`, width: `${node.width}px`, height: `${node.height}px`, "--node-fill": style.fillColor, "--node-border": style.borderColor, "--node-border-width": `${style.borderWidth}px`, "--node-text-color": style.textColor, "--node-text-size": `${style.textSize}px`, "--node-font-weight": style.textStyle.includes("bold") ? 700 : 400, "--node-font-style": style.textStyle.includes("italic") ? "italic" : "normal" });
           return `<div class="diagram-node ${nodeKindClass(node.kind)} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""} ${node.groupId ? "grouped" : ""}" data-node="${node.id}" title="${node.groupId ? "Double-click to select this group member" : "Double-click to edit text"}">
             ${renderNodeContent(node)}${renderModelPorts(node)}
-            ${selected ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
+            ${selected && isConnectableNode(node) ? ["top", "right", "bottom", "left"].map((side) => `<span class="connector-handle connector-${side}" data-handle="${node.id}" data-side="${side}" title="Connect from ${side} side"></span>`).join("") : ""}
             ${selected && selectedIds().length === 1 && !node.locked ? `<span class="resize-handle" data-resize="${node.id}" title="Resize element"></span>` : ""}
           </div>`;
         }).join("")}
@@ -863,6 +908,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelectorAll("[data-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
       const source = state.diagram.elements.find((node) => node.id === handle.dataset.handle);
+      if (!isConnectableNode(source)) return;
       const sourceAnchor = { side: handle.dataset.side, offset: 0.5 }; const start = anchorPoint(source, sourceAnchor);
       const selectedTool = state.selectedTool?.type === "relationship" ? state.selectedTool : null;
       connectDrag = { sourceId: source.id, sourceAnchor, kind: selectedTool?.kind ?? "directional-association", label: selectedTool?.label ?? "", start, x2: start.x, y2: start.y };
@@ -1147,6 +1193,25 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     });
   }
 
+  function applyTextPreset(preset) {
+    const presets = {
+      h1: { textSize: 32, textStyle: "bold" }, h2: { textSize: 28, textStyle: "bold" },
+      h3: { textSize: 24, textStyle: "bold" }, h4: { textSize: 20, textStyle: "bold" },
+      h5: { textSize: 18, textStyle: "bold" }, h6: { textSize: 16, textStyle: "bold" },
+      paragraph: { textSize: 13, textStyle: "normal" }
+    };
+    const style = presets[preset];
+    if (!style || !selectedIds().length) return;
+    mutate((next) => {
+      const selected = new Set(selectedIds());
+      next.elements.forEach((node) => {
+        if (!selected.has(node.id) || node.kind !== "text-label") return;
+        node.style = { ...(node.style ?? {}), ...style };
+        fitNodeToContent(node);
+      });
+    });
+  }
+
   function applyRelationshipStyle(property, value) {
     if (!state.selectedRelationshipId) return;
     mutate((next) => {
@@ -1358,15 +1423,29 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     previewColor(input);
   }, { signal: lifecycle.signal });
   element.addEventListener("change", (event) => {
-    const input = event.target.closest("[data-style],[data-relationship-style]");
+    const input = event.target.closest("[data-style],[data-relationship-style],[data-text-preset]");
     if (!input) return;
     event.stopPropagation();
+    // A focused native select intentionally blocks full canvas renders so
+    // unrelated updates cannot close its open menu. Once the user commits a
+    // choice, release that guard and repaint immediately instead of waiting
+    // until the selected canvas element is later deselected.
+    const finishToolbarChoice = () => {
+      if (input.tagName === "SELECT") input.blur();
+      scheduleRender();
+    };
+    if (input.dataset.textPreset !== undefined) {
+      applyTextPreset(input.value);
+      finishToolbarChoice();
+      return;
+    }
     if (input.dataset.colorInput) { previewColor(input); commitColor(input); return; }
     if (input.dataset.style) {
       const numeric = input.dataset.style === "borderWidth" || input.dataset.style === "textSize";
       applyStyle(input.dataset.style, input.type === "color" ? input.value : numeric ? Number(input.value) : input.value);
     }
     if (input.dataset.relationshipStyle) applyRelationshipStyle(input.dataset.relationshipStyle, input.value);
+    finishToolbarChoice();
   }, { signal: lifecycle.signal });
   element.addEventListener("focusout", (event) => {
     const input = event.target.closest?.("[data-color-input]");
@@ -1378,6 +1457,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       viewportFrame = null;
       state.canvasViewport = { zoom, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop };
       positionFormattingToolbar();
+      positionPointerSurface(".relationship-toolbar", relationshipSurfaceAnchor());
+      positionPointerSurface(".canvas-context-menu", contextSurfaceAnchor());
       positionCommentSurfaces();
       syncMinimapViewport();
       runtimeStyles.commit();
@@ -1503,10 +1584,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     }
     if (connectDrag) {
       const targetId = event.target.closest?.("[data-node]")?.dataset.node;
-      if (targetId && targetId !== connectDrag.sourceId) {
+      const targetNode = state.diagram.elements.find((item) => item.id === targetId);
+      if (targetId && targetId !== connectDrag.sourceId && isConnectableNode(targetNode)) {
         const sourceId = connectDrag.sourceId;
         const kind = connectDrag.kind; const label = connectDrag.label;
-        const target = state.diagram.elements.find((item) => item.id === targetId); const targetAnchor = nearestAnchor(target, pointOnCanvas(event));
+        const target = targetNode; const targetAnchor = nearestAnchor(target, pointOnCanvas(event));
         const candidate = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, sourceAnchor: connectDrag.sourceAnchor, targetAnchor, routing: "orthogonal", label, properties: {}, style: { ...defaultRelationshipStyle } };
         const validation = validateRelationshipCompatibility(candidate, state.diagram.elements.map((node) => ({ id: node.id, kind: node.kind, name: node.name, semantic: node.properties ?? {} })));
         if (validation.status === "invalid") bus.emit("toast", validation.diagnostics[0] ?? "Incompatible connection");
@@ -1514,6 +1596,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           mutate((next) => { next.relationships.push(candidate); state.selectedRelationshipId = candidate.id; state.selectedElementIds = []; });
           clearSelectedTool();
         }
+      } else if (targetNode?.kind === "text-label") {
+        bus.emit("toast", "Text elements cannot have connections");
       }
       connectDrag = null; render(); return;
     }
@@ -1526,9 +1610,13 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const targetId = event.target.closest?.("[data-node]")?.dataset.node;
       if (targetId) {
         const completed = structuredClone(state.diagram); const relationship = completed.relationships.find((item) => item.id === completedGesture.relationshipId); const target = completed.elements.find((item) => item.id === targetId);
-        if (completedGesture.index === 0) { relationship.source_id = targetId; relationship.sourceAnchor = nearestAnchor(target, pointOnCanvas(event)); }
-        else { relationship.target_id = targetId; relationship.targetAnchor = nearestAnchor(target, pointOnCanvas(event)); }
-        delete relationship.waypoints; state.diagram = completed; completedGesture.changed = true;
+        if (isConnectableNode(target)) {
+          if (completedGesture.index === 0) { relationship.source_id = targetId; relationship.sourceAnchor = nearestAnchor(target, pointOnCanvas(event)); }
+          else { relationship.target_id = targetId; relationship.targetAnchor = nearestAnchor(target, pointOnCanvas(event)); }
+          delete relationship.waypoints; state.diagram = completed; completedGesture.changed = true;
+        } else {
+          bus.emit("toast", "Text elements cannot have connections");
+        }
       }
     }
     if (completedGesture.type === "marquee") {

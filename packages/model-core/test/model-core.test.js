@@ -10,6 +10,9 @@ test("catalog contains every unique UML and SysML diagram type", () => {
 
 test("palette keeps common tools global and diagram tools strictly scoped", () => {
   assert.equal(commonElements.some(({ kind }) => kind === "package"), true);
+  assert.equal(commonElements.filter(({ kind }) => kind === "text-label").length, 1);
+  assert.equal(diagramCatalog.some(({ palette }) => palette.some(({ kind }) => kind === "text-label")), false);
+  assert.equal(isPaletteItemAllowed("sysml-requirement", "node", "text-label"), true);
   assert.equal(isPaletteItemAllowed("uml-class", "node", "class"), true);
   assert.equal(isPaletteItemAllowed("uml-class", "relationship", "composition"), true);
   assert.equal(isPaletteItemAllowed("uml-class", "node", "actor"), false);
@@ -20,6 +23,13 @@ test("palette keeps common tools global and diagram tools strictly scoped", () =
   const blockVariants = diagramCatalog.find(({ value }) => value === "sysml-bdd").palette.filter(({ kind }) => kind === "block").map(({ variant }) => variant);
   assert.deepEqual(classVariants, ["full", "simple"]);
   assert.deepEqual(blockVariants, ["full", "simple"]);
+});
+
+test("plain text elements cannot be relationship endpoints", () => {
+  const elements = [{ id: "text", kind: "text-label" }, { id: "note", kind: "note" }, { id: "block", kind: "block" }];
+  assert.equal(validateRelationshipCompatibility({ kind: "association", source_id: "text", target_id: "block" }, elements).status, "invalid");
+  assert.equal(validateRelationshipCompatibility({ kind: "association", source_id: "block", target_id: "text" }, elements).status, "invalid");
+  assert.equal(validateRelationshipCompatibility({ kind: "association", source_id: "note", target_id: "block" }, elements).status, "valid");
 });
 
 test("validates tenant-scoped diagrams and relationships", () => {
