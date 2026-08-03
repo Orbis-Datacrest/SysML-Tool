@@ -6,7 +6,7 @@ export const relationshipTypes = [
   ["bidirectional-association", "Bidirectional Association"], ["dependency", "Dependency"],
   ["generalization", "Generalization"], ["realization", "Realization"],
   ["composition", "Composition"], ["aggregation", "Aggregation"], ["containment", "Containment"],
-  ["note-connector", "Anchor Link"], ["link", "Link"], ["communication-path", "Communication Path"],
+  ["note-connector", "Anchor Link"], ["link", "Link"], ["connector", "Connector"], ["communication-path", "Communication Path"],
   ["package-merge", "Package Merge"], ["extension", "Extension"], ["control-flow", "Control Flow"],
   ["object-flow", "Object Flow"], ["transition", "Transition"], ["synchronous-message", "Synchronous Message"],
   ["asynchronous-message", "Asynchronous Message"], ["return-message", "Return Message"], ["numbered-message", "Numbered Message"],
@@ -14,13 +14,28 @@ export const relationshipTypes = [
   ["derive-reqt", "«deriveReqt»"], ["satisfy", "«satisfy»"], ["verify", "«verify»"], ["refine", "«refine»"], ["trace", "«trace»"]
 ];
 
-export const defaultNodeStyle = { borderColor: "#ffffff", fillColor: "#d7eadb", borderWidth: 1, textColor: "#102016", textSize: 13, textStyle: "normal" };
+const notationLabels = {
+  include: "«include»", extend: "«extend»", "package-merge": "«merge»",
+  "derive-reqt": "«deriveReqt»", satisfy: "«satisfy»", verify: "«verify»", refine: "«refine»", trace: "«trace»"
+};
+
+export function defaultRelationshipLabel(kind) {
+  return notationLabels[kind] ?? "";
+}
+
+export function visibleRelationshipLabel(relationship) {
+  const value = String(relationship?.label ?? "").trim();
+  const paletteLabel = relationshipTypes.find(([kind]) => kind === relationship?.kind)?.[1] ?? "";
+  return value && value !== paletteLabel ? value : defaultRelationshipLabel(relationship?.kind);
+}
+
+export const defaultNodeStyle = { borderColor: "#ffffff", fillColor: "#d7eadb", borderWidth: 1, textColor: "#ffffff", textSize: 13, textStyle: "normal" };
 export const themeNodeStyles = {
-  dark: { borderColor: "#ffffff", fillColor: "#172033", textColor: "#f4f7fb" },
+  dark: { borderColor: "#ffffff", fillColor: "#172033", textColor: "#ffffff" },
   light: { borderColor: "#ffffff", fillColor: "#ffffff", textColor: "#111827" }
 };
 export const lightTextKinds = new Set(["actor", "initial-node", "initial-state", "final-node", "final-state", "activity-final", "flow-final", "entry-point", "exit-point", "terminate", "fork-join", "fork-node", "join-node", "destruction-occurrence"]);
-export const defaultRelationshipStyle = { color: "#9aa8bb", width: 2 };
+export const defaultRelationshipStyle = { color: "#9aa8bb", textColor: "#ffffff", width: 2 };
 export const pageSizes = {
   "letter-landscape": { label: "Letter", width: 1056, height: 816 },
   "a4-landscape": { label: "A4", width: 1123, height: 794 },

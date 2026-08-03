@@ -7,8 +7,8 @@ import {
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
 import {
-  CANVAS, ZOOM, compartmentDefinitionsFor, defaultNodeStyle, defaultPageSize, defaultRelationshipStyle,
-  lightTextKinds, pageSizes, relationshipTypes, shortcutRows, simpleShapeKinds, themeNodeStyles
+  CANVAS, ZOOM, compartmentDefinitionsFor, defaultNodeStyle, defaultPageSize, defaultRelationshipLabel, defaultRelationshipStyle,
+  lightTextKinds, pageSizes, relationshipTypes, shortcutRows, simpleShapeKinds, themeNodeStyles, visibleRelationshipLabel
 } from "./config/canvasConfig.js";
 import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
 import { createNodeRenderer } from "./rendering/createNodeRenderer.js";
@@ -86,6 +86,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let connectDrag = null;
   let contextMenu = null;
   let relationshipToolbar = null;
+  let editingRelationshipLabelId = null;
   let lastRelationshipPress = null;
   let selectionFrame = null;
   let paletteHover = null;
@@ -167,7 +168,11 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const relationshipStyle = (relationship) => {
     const custom = relationship.style ?? {};
     const style = { ...defaultRelationshipStyle, ...custom };
-    return { ...style, color: normalizeColor(custom.color ?? custom.lineColor ?? custom.strokeColor, defaultRelationshipStyle.color) };
+    return {
+      ...style,
+      color: normalizeColor(custom.color ?? custom.lineColor ?? custom.strokeColor, defaultRelationshipStyle.color),
+      textColor: normalizeColor(custom.textColor ?? custom.fontColor, defaultRelationshipStyle.textColor)
+    };
   };
   const pointOnCanvas = (event) => {
     const rect = element.getBoundingClientRect();
@@ -179,6 +184,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     setDiagram(next);
   };
   const setSelection = (ids, relationshipId = null, expandGroups = true) => {
+    if (editingRelationshipLabelId && editingRelationshipLabelId !== relationshipId) editingRelationshipLabelId = null;
     state.selectedElementIds = [...new Set(expandGroups ? expandGroupedSelection(state.diagram.elements, ids) : ids)];
     state.selectedRelationshipId = relationshipId;
     selectionFrame = state.selectedElementIds.length > 1 ? selectionBounds(state.diagram.elements, state.selectedElementIds) : null;
@@ -189,11 +195,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   const beginRelationshipLabelEditing = (event, relationshipId) => {
     event.preventDefault(); event.stopPropagation(); contextMenu = null;
     lastRelationshipPress = null;
-    relationshipToolbar = { x: event.clientX, y: event.clientY };
+    relationshipToolbar = null;
+    editingRelationshipLabelId = relationshipId;
     setSelection([], relationshipId);
     render();
     requestAnimationFrame(() => {
-      const input = element.querySelector('[data-relationship-text="label"]');
+      const input = [...element.querySelectorAll("[data-inline-relationship-label]")].find((candidate) => candidate.dataset.inlineRelationshipLabel === relationshipId);
       input?.focus();
       input?.select();
     });
@@ -274,14 +281,43 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
           "--relationship-color": style.color,
           "--relationship-width": `${style.width}px`
         });
-        const labels = [relationship.label || relationshipTypes.find(([type]) => type === relationship.kind)?.[1] || relationship.kind, relationship.roleLabel, relationship.multiplicity].filter(Boolean).join("  ");
-        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${d}"></path>
+        runtimeStyles.set(`relationship-text-${relationship.id}`, `[data-relationship-label="${relationshipSelector}"]`, {
+          "--relationship-text-color": style.textColor
+        });
+        const label = visibleRelationshipLabel(relationship);
+        const sourceRole = relationship.sourceRoleLabel ?? relationship.properties?.sourceRoleLabel ?? "";
+        const sourceMultiplicity = relationship.sourceMultiplicity ?? relationship.properties?.sourceMultiplicity ?? "";
+        const targetRole = relationship.targetRoleLabel ?? relationship.roleLabel ?? relationship.properties?.targetRoleLabel ?? "";
+        const targetMultiplicity = relationship.targetMultiplicity ?? relationship.multiplicity ?? relationship.properties?.targetMultiplicity ?? "";
+        const endpointText = (end, role, multiplicity) => {
+          if (!role && !multiplicity) return "";
+          const endpointIndex = end === "source" ? 0 : points.length - 1;
+          const neighborIndex = end === "source" ? Math.min(1, points.length - 1) : Math.max(0, points.length - 2);
+          const endpoint = points[endpointIndex]; const neighbor = points[neighborIndex];
+          const dx = neighbor.x - endpoint.x; const dy = neighbor.y - endpoint.y; const length = Math.hypot(dx, dy) || 1;
+          const x = endpoint.x + (dx / length) * 24; const y = endpoint.y + (dy / length) * 24;
+          return `${role ? `<text class="relationship-end-label role" data-relationship-label="${relationship.id}" x="${x}" y="${y - 9}">${escapeHtml(role)}</text>` : ""}${multiplicity ? `<text class="relationship-end-label multiplicity" data-relationship-label="${relationship.id}" x="${x}" y="${y + 11}">${escapeHtml(multiplicity)}</text>` : ""}`;
+        };
+        return `<path class="relationship-hit" data-rel="${relationship.id}" d="${d}" title="Double-click to edit relationship label"></path>
           <path class="relationship-line ${selected ? "selected" : ""}" data-relationship="${relationship.id}" d="${d}" stroke-dasharray="${decoration.dashed ? "7 6" : "0"}" ${decoration.start ? `marker-start="url(#${decoration.start})"` : ""} ${decoration.end ? `marker-end="url(#${decoration.end})"` : ""}></path>
-          <text class="relationship-label ${selected ? "selected" : ""}" data-rel="${relationship.id}" x="${labelPoint.x}" y="${labelPoint.y - 9}">${escapeHtml(labels)}</text>
+          ${label ? `<text class="relationship-label ${selected ? "selected" : ""}" data-rel="${relationship.id}" data-relationship-label="${relationship.id}" x="${labelPoint.x}" y="${labelPoint.y - 9}" title="Double-click to edit relationship label">${escapeHtml(label)}</text>` : ""}
+          ${endpointText("source", sourceRole, sourceMultiplicity)}${endpointText("target", targetRole, targetMultiplicity)}
           ${selected ? [0, points.length - 1].filter((index, position, indexes) => indexes.indexOf(index) === position).map((index) => `<circle class="route-handle endpoint" data-route-handle="${relationship.id}" data-route-index="${index}" cx="${points[index].x}" cy="${points[index].y}" r="${7 / zoom}"></circle>`).join("") : ""}`;
       }).join("")}
       ${connectDrag ? `<path class="relationship-preview" d="${routeToPath([connectDrag.start, { x: connectDrag.x2, y: connectDrag.start.y }, { x: connectDrag.x2, y: connectDrag.y2 }])}" marker-end="url(#open-arrow)"></path>` : ""}
     </svg>`;
+  }
+
+  function renderRelationshipLabelEditor(diagram) {
+    if (!editingRelationshipLabelId) return "";
+    const relationship = (diagram.relationships ?? []).find((item) => item.id === editingRelationshipLabelId);
+    if (!relationship) return "";
+    const source = diagram.elements.find((node) => node.id === relationship.source_id);
+    const target = diagram.elements.find((node) => node.id === relationship.target_id);
+    if (!source || !target) return "";
+    const point = pointAlongRoute(relationshipRoute(relationship, diagram.elements), relationship.labelPosition ?? 0.5);
+    runtimeStyles.set("relationship-label-editor", ".relationship-label-editor", { left: `${point.x}px`, top: `${point.y - 10}px` });
+    return `<input class="relationship-label-editor" data-inline-relationship-label="${escapeHtml(relationship.id)}" value="${escapeHtml(visibleRelationshipLabel(relationship))}" placeholder="Relationship label" aria-label="Edit relationship label">`;
   }
 
   function renderAiGhosts(diagram) {
@@ -341,10 +377,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (viewportBounds.right < rect.left || viewportBounds.left > rect.right || viewportBounds.bottom < rect.top || viewportBounds.top > rect.bottom) return null;
     const width = Math.min(surfaceWidth, Math.max(0, rect.width - 16));
     const height = Math.min(surfaceHeight, Math.max(0, rect.height - 16));
-    return {
-      x: clamp(viewportBounds.left, rect.left + 8, rect.right - width - 8),
-      y: clamp(viewportBounds.top - height, rect.top + 8, rect.bottom - height - 8)
-    };
+    const inset = 8; const gap = 14;
+    const minimumX = rect.left + inset; const maximumX = rect.right - width - inset;
+    const minimumY = rect.top + inset; const maximumY = rect.bottom - height - inset;
+    const alignedY = clamp(viewportBounds.top, minimumY, maximumY);
+    const alignedX = clamp(viewportBounds.left, minimumX, maximumX);
+
+    // Keep the selection and all four connector handles unobstructed. The right
+    // side is the stable first choice; other sides are true non-overlapping fallbacks.
+    if (viewportBounds.right + gap + width <= rect.right - inset) return { x: viewportBounds.right + gap, y: alignedY };
+    if (viewportBounds.left - gap - width >= rect.left + inset) return { x: viewportBounds.left - gap - width, y: alignedY };
+    if (viewportBounds.bottom + gap + height <= rect.bottom - inset) return { x: alignedX, y: viewportBounds.bottom + gap };
+    if (viewportBounds.top - gap - height >= rect.top + inset) return { x: alignedX, y: viewportBounds.top - gap - height };
+    return null;
   }
 
   function positionFormattingToolbar() {
@@ -613,9 +658,12 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <select data-relationship-style="kind" title="Relation type">${relationshipTypes.map(([type, label]) => `<option value="${type}" ${relationship.kind === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       <label title="Line thickness">Line <select data-relationship-style="width">${[1, 2, 3, 4, 5].map((width) => `<option value="${width}" ${style.width === width ? "selected" : ""}>${width}px</option>`).join("")}</select></label>
       <span class="format-field" title="Line and arrow color">Color ${renderColorControl({ value: style.color, label: "Line and arrow color", relationshipProperty: "color" })}</span>
+      <span class="format-field" title="Arrow label text color">Text ${renderColorControl({ value: style.textColor, label: "Arrow label text color", relationshipProperty: "textColor" })}</span>
       <input data-relationship-text="label" value="${escapeHtml(relationship.label ?? "")}" placeholder="Label" title="Connector label">
-      <input data-relationship-text="roleLabel" value="${escapeHtml(relationship.roleLabel ?? "")}" placeholder="Role" title="Role label">
-      <input data-relationship-text="multiplicity" value="${escapeHtml(relationship.multiplicity ?? "")}" placeholder="0..*" title="Multiplicity">
+      <input data-relationship-text="sourceRoleLabel" value="${escapeHtml(relationship.sourceRoleLabel ?? "")}" placeholder="Source role" title="Source-end role label">
+      <input data-relationship-text="sourceMultiplicity" value="${escapeHtml(relationship.sourceMultiplicity ?? "")}" placeholder="Source 0..*" title="Source-end multiplicity">
+      <input data-relationship-text="targetRoleLabel" value="${escapeHtml(relationship.targetRoleLabel ?? relationship.roleLabel ?? "")}" placeholder="Target role" title="Target-end role label">
+      <input data-relationship-text="targetMultiplicity" value="${escapeHtml(relationship.targetMultiplicity ?? relationship.multiplicity ?? "")}" placeholder="Target 0..*" title="Target-end multiplicity">
       <button data-relationship-command="reroute" title="Discard waypoints and route around obstacles">Reroute</button>
       <button data-relationship-command="delete" class="danger" title="Delete connection">Delete</button>
     </div>`;
@@ -753,7 +801,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     // updates are safely picked up by the commit render on blur.
     const activeToolbarSelect = document.activeElement?.tagName === "SELECT" && document.activeElement.closest?.(".relationship-toolbar,.format-toolbar,.canvas-toolbar");
     const activeCommentUi = commentDraft || selectedCommentThreadId || editingComment;
-    if (activeToolbarSelect || (editingNode && element.querySelector("[data-node-editor]")) || (activeCommentUi && element.querySelector(".comment-composer:focus-within") && document.activeElement?.closest?.(".comment-composer"))) return;
+    const activeRelationshipLabelEditor = editingRelationshipLabelId && element.querySelector("[data-inline-relationship-label]:focus");
+    if (activeToolbarSelect || activeRelationshipLabelEditor || (editingNode && element.querySelector("[data-node-editor]")) || (activeCommentUi && element.querySelector(".comment-composer:focus-within") && document.activeElement?.closest?.(".comment-composer"))) return;
     const diagram = state.diagram;
     if (!diagram) return;
     runtimeStyles.clear();
@@ -789,6 +838,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     <div class="canvas-content ${showGrid && gridSize ? "" : "grid-hidden"} ${state.selectedTool?.type === "comment" ? "comment-tool-active" : ""}">
       <div id="canvas-plane">
         ${renderRelationships(diagram)}
+        ${renderRelationshipLabelEditor(diagram)}
         ${renderAiGhosts(diagram)}
         ${renderGuides()}
         ${renderCollaborationOverlay(diagram)}
@@ -925,6 +975,26 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       });
       target.addEventListener("contextmenu", (event) => openRelationshipToolbar(event, target.dataset.rel));
       target.addEventListener("dblclick", (event) => beginRelationshipLabelEditing(event, target.dataset.rel));
+    });
+    element.querySelectorAll("[data-inline-relationship-label]").forEach((input) => {
+      let cancelled = false;
+      const finish = () => {
+        if (editingRelationshipLabelId !== input.dataset.inlineRelationshipLabel) return;
+        const relationshipId = editingRelationshipLabelId;
+        editingRelationshipLabelId = null;
+        if (!cancelled && input.value.trim() !== input.defaultValue.trim()) mutate((next) => {
+          const relationship = next.relationships.find((item) => item.id === relationshipId);
+          if (relationship) relationship.label = input.value.trim();
+        });
+        else render();
+      };
+      input.addEventListener("pointerdown", (event) => event.stopPropagation());
+      input.addEventListener("blur", finish, { once: true });
+      input.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+        if (event.key === "Escape") { event.preventDefault(); cancelled = true; input.blur(); }
+      });
     });
     element.querySelectorAll("[data-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
@@ -1244,7 +1314,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     mutate((next) => {
       const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId);
       if (property === "kind") relationship.kind = value;
-      else relationship.style = { ...defaultRelationshipStyle, ...(relationship.style ?? {}), [property]: property === "width" ? Number(value) : normalizeColor(value, relationshipStyle(relationship).color) };
+      else {
+        const fallback = property === "textColor" ? relationshipStyle(relationship).textColor : relationshipStyle(relationship).color;
+        relationship.style = { ...defaultRelationshipStyle, ...(relationship.style ?? {}), [property]: property === "width" ? Number(value) : normalizeColor(value, fallback) };
+      }
     });
   }
 
@@ -1614,7 +1687,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       const targetNode = state.diagram.elements.find((item) => item.id === targetId);
       if (targetId && targetId !== connectDrag.sourceId && isConnectableNode(targetNode)) {
         const sourceId = connectDrag.sourceId;
-        const kind = connectDrag.kind; const label = connectDrag.label;
+        const kind = connectDrag.kind; const label = defaultRelationshipLabel(kind);
         const target = targetNode; const targetAnchor = nearestAnchor(target, pointOnCanvas(event));
         const candidate = { id: id("rel"), kind, source_id: sourceId, target_id: targetId, sourceAnchor: connectDrag.sourceAnchor, targetAnchor, routing: "orthogonal", label, properties: {}, style: { ...defaultRelationshipStyle } };
         const validation = validateRelationshipCompatibility(candidate, state.diagram.elements.map((node) => ({ id: node.id, kind: node.kind, name: node.name, semantic: node.properties ?? {} })));

@@ -12,7 +12,8 @@ export function defaultSizeFor(kind, variant = "full") {
     "frame-fragment": [150, 110], callout: [170, 150], "text-label": [120, 44],
     "symbol-braces": [98, 42], "symbol-guillemets": [98, 42], lifeline: [120, 240],
     "accept-event-action": [180, 80], "send-signal-action": [180, 80], "input-pin": [54, 54],
-    "output-pin": [54, 54], "destruction-occurrence": [70, 70]
+    "output-pin": [54, 54], "destruction-occurrence": [70, 70], "provided-interface": [100, 58],
+    "required-interface": [100, 58], port: [42, 42], "proxy-port": [42, 42], "full-port": [42, 42]
   };
   if (["class", "block"].includes(kind) && variant === "simple") return { width: 190, height: 120 };
   if (sizes[kind]) return { width: sizes[kind][0], height: sizes[kind][1] };

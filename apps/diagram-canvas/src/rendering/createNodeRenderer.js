@@ -38,6 +38,9 @@ export function createNodeRenderer({ getEditingNode }) {
     if (node.kind === "send-signal-action") return `<div class="event-action-shape send"></div>${simpleName("shape-caption centered")}`;
     if (node.kind === "destruction-occurrence") return `<div class="destruction-shape"></div>${simpleName("shape-caption below")}`;
     if (node.kind === "component") return `<div class="component-lugs"><span></span><span></span></div>${simpleName("component-content", "Component name")}`;
+    if (node.kind === "provided-interface") return `<div class="provided-interface-symbol"><span></span></div>${simpleName("interface-symbol-name", "Provided interface name")}`;
+    if (node.kind === "required-interface") return `<div class="required-interface-symbol"><span></span></div>${simpleName("interface-symbol-name", "Required interface name")}`;
+    if (["port", "proxy-port", "full-port"].includes(node.kind)) return `<div class="port-symbol"></div>${simpleName("port-symbol-name", "Port name")}`;
     if (node.kind === "object") return `<div class="object-content">${simpleName("object-title", "Object name")}${editableSection(node, "attributes", "Attributes", "object-attributes", "Attributes")}</div>`;
     if (node.kind === "compact-class") return simpleName("compact-class-content", "Class name");
     if (node.kind === "object-compact") return simpleName("object-compact-content", "Object name");

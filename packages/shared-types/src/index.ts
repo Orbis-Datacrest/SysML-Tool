@@ -162,6 +162,9 @@ export interface DiagramRelationshipReference {
   roleLabel?: string;
   multiplicity?: string;
   sourceMultiplicity?: string;
+  sourceRoleLabel?: string;
+  targetRoleLabel?: string;
+  targetMultiplicity?: string;
   style?: Record<string, unknown>;
   display?: Record<string, unknown>;
 }
@@ -206,6 +209,10 @@ export interface DiagramRelationship {
   targetAnchor?: { side: "top" | "right" | "bottom" | "left"; offset?: number; portId?: string };
   roleLabel?: string;
   multiplicity?: string;
+  sourceRoleLabel?: string;
+  targetRoleLabel?: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   properties: Record<string, unknown>;
 }
 

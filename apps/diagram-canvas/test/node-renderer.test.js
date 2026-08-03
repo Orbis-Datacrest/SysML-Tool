@@ -51,3 +51,10 @@ test("structured interface classes no longer render a third responsibility secti
   assert.match(html, /data-edit-section="operations"/);
   assert.doesNotMatch(html, /Acting \/ Charge|Legacy responsibility/);
 });
+
+test("component interface and port elements render UML symbols instead of generic compartments", () => {
+  const render = createNodeRenderer({ getEditingNode: () => null });
+  assert.match(render(node({ kind: "provided-interface", name: "Lookup" })), /provided-interface-symbol/);
+  assert.match(render(node({ kind: "required-interface", name: "Account" })), /required-interface-symbol/);
+  assert.match(render(node({ kind: "port", name: "API" })), /port-symbol/);
+});

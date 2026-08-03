@@ -20,13 +20,14 @@ const definitions = [
     node("frame-fragment", "Frame / Fragment"), node("callout", "Callout"),
     node("symbol-braces", "Symbol { }"), node("symbol-guillemets", "Symbol << >>"),
     relationship("generalization", "Generalization"),
-    relationship("association", "Association"), relationship("aggregation", "Aggregation"), relationship("composition", "Composition")
+    relationship("realization", "Realization"), relationship("dependency", "Dependency"),
+    relationship("association", "Association"), relationship("directional-association", "Directed Association"), relationship("aggregation", "Aggregation"), relationship("composition", "Composition")
   ]],
   ["UML", "Structural", "uml-object", "Object Diagram", [
     node("instance-specification", "Instance Specification", "object"), node("slot", "Slot"), relationship("link", "Link")
   ]],
   ["UML", "Structural", "uml-component", "Component Diagram", [
-    node("component", "Component"), node("provided-interface", "Provided Interface"), node("required-interface", "Required Interface"), node("port", "Port")
+    node("component", "Component"), node("provided-interface", "Provided Interface"), node("required-interface", "Required Interface"), node("port", "Port"), relationship("connector", "Assembly Connector"), relationship("dependency", "Dependency"), relationship("realization", "Realization")
   ]],
   ["UML", "Structural", "uml-deployment", "Deployment Diagram", [
     node("node", "Node", "deployment-node"), node("artifact", "Artifact"), relationship("communication-path", "Communication Path")
