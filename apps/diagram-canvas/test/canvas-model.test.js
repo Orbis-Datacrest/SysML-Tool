@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, isColorInputValue, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
+import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, isColorInputValue, layoutElementsByStrategy, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -108,6 +108,14 @@ test("auto-layout uses relationship direction to create readable layers", () => 
   assert.ok(source.x < target.x);
   assert.equal(target.x, peer.x);
   assert.notEqual(target.y, peer.y);
+});
+
+test("AI layout strategies rearrange geometry without changing model content", () => {
+  const elements = [node("a", 10, 10), node("b", 10, 10), node("c", 10, 10)];
+  const names = elements.map((item) => item.name);
+  layoutElementsByStrategy(elements, [], "radial", { width: 1000, height: 800 }, 20, []);
+  assert.equal(new Set(elements.map((item) => `${item.x},${item.y}`)).size, 3);
+  assert.deepEqual(elements.map((item) => item.name), names);
 });
 
 test("smart guides report nearby alignment lines", () => {

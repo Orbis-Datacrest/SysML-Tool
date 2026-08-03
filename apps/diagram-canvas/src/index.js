@@ -86,6 +86,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let connectDrag = null;
   let contextMenu = null;
   let relationshipToolbar = null;
+  let lastRelationshipPress = null;
   let selectionFrame = null;
   let paletteHover = null;
   let editingNode = null;
@@ -183,6 +184,19 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     selectionFrame = state.selectedElementIds.length > 1 ? selectionBounds(state.diagram.elements, state.selectedElementIds) : null;
     if (!relationshipId) relationshipToolbar = null;
     bus.emit("selection:changed", state.selectedElementIds);
+  };
+
+  const beginRelationshipLabelEditing = (event, relationshipId) => {
+    event.preventDefault(); event.stopPropagation(); contextMenu = null;
+    lastRelationshipPress = null;
+    relationshipToolbar = { x: event.clientX, y: event.clientY };
+    setSelection([], relationshipId);
+    render();
+    requestAnimationFrame(() => {
+      const input = element.querySelector('[data-relationship-text="label"]');
+      input?.focus();
+      input?.select();
+    });
   };
 
   const nodeKindClass = (kind) => `node-shape-${kind.replace(/[^a-z0-9-]/g, "")}`;
@@ -902,8 +916,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       event.preventDefault(); event.stopPropagation(); toggleCompartment(button.dataset.compartmentToggle, button.dataset.compartmentKey);
     }));
     element.querySelectorAll("[data-rel]").forEach((target) => {
-      target.addEventListener("pointerdown", (event) => { event.stopPropagation(); contextMenu = null; setSelection([], target.dataset.rel); });
+      target.addEventListener("pointerdown", (event) => {
+        const pressedAt = performance.now();
+        const repeatedPress = event.button === 0 && lastRelationshipPress?.relationshipId === target.dataset.rel && pressedAt - lastRelationshipPress.at < 500;
+        lastRelationshipPress = repeatedPress ? null : { relationshipId: target.dataset.rel, at: pressedAt };
+        if (repeatedPress) { beginRelationshipLabelEditing(event, target.dataset.rel); return; }
+        event.stopPropagation(); contextMenu = null; setSelection([], target.dataset.rel);
+      });
       target.addEventListener("contextmenu", (event) => openRelationshipToolbar(event, target.dataset.rel));
+      target.addEventListener("dblclick", (event) => beginRelationshipLabelEditing(event, target.dataset.rel));
     });
     element.querySelectorAll("[data-handle]").forEach((handle) => handle.addEventListener("pointerdown", (event) => {
       event.preventDefault(); event.stopPropagation();
@@ -1027,9 +1048,15 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelector("[data-relationship-command='reroute']")?.addEventListener("click", () => mutate((next) => {
       const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) delete relationship.waypoints;
     }));
-    element.querySelectorAll("[data-relationship-text]").forEach((input) => input.addEventListener("change", () => mutate((next) => {
-      const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) relationship[input.dataset.relationshipText] = input.value.trim();
-    })));
+    element.querySelectorAll("[data-relationship-text]").forEach((input) => {
+      input.addEventListener("change", () => mutate((next) => {
+        const relationship = next.relationships.find((item) => item.id === state.selectedRelationshipId); if (relationship) relationship[input.dataset.relationshipText] = input.value.trim();
+      }));
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); input.blur(); }
+        if (event.key === "Escape") { event.preventDefault(); input.value = input.defaultValue; input.blur(); }
+      });
+    });
     element.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => executeCommand(button.dataset.command)));
     bindCommentEvents();
   }

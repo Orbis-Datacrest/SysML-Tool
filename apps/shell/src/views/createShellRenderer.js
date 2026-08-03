@@ -357,6 +357,7 @@ function renderShell() {
     }
     state.rightPanel = next.panel;
     state.sidebarLayout.right.open = next.open;
+    persistSidebarLayout(state.sidebarLayout);
     renderShell();
   };
   document.querySelector("#ai-sidebar-toggle")?.addEventListener("click", () => activateRightPanel("advisor").catch((error) => bus.emit("toast", error.message)));
@@ -444,6 +445,7 @@ function renderShell() {
   const closeRightPanelOnOutsidePointer = (event) => {
     if (!state.sidebarLayout.right.open) return;
     if (event.target.closest?.("#ai-advisor-sidebar,#ai-sidebar-toggle,#history-toggle")) return;
+    if (state.rightPanel === "advisor") return;
     rightPanelRequestVersion += 1;
     state.sidebarLayout.right.open = false;
     applySidebarLayout();
@@ -466,7 +468,7 @@ function renderShell() {
   });
   document.querySelector(".workspace-drawer-backdrop")?.addEventListener("click", () => {
     state.sidebarLayout.left.open = false;
-    state.sidebarLayout.right.open = false;
+    if (state.rightPanel !== "advisor") state.sidebarLayout.right.open = false;
     applySidebarLayout();
   });
   document.querySelector("#theme-toggle")?.addEventListener("click", async () => {

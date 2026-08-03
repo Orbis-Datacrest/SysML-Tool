@@ -50,7 +50,11 @@ export function materializeSemanticProposal(diagram, proposal, createId) {
       operations.push({ semantic_operation_id: semantic.id, op: "removeRelationship", relationship_id: semantic.relationship_id });
     }
   }
-  return { summary: proposal.summary, base_element_ids: [...existing.keys()], operations };
+  const layouts = proposal.layout_suggestions.map((layout) => ({
+    ...layout,
+    element_ids: layout.element_refs.map((ref) => refToId.get(ref)).filter(Boolean)
+  }));
+  return { summary: proposal.summary, base_element_ids: [...existing.keys()], operations, layouts };
 }
 
 export function validateProposalReferences(diagram, proposal) {
@@ -68,6 +72,10 @@ export function validateProposalReferences(diagram, proposal) {
     if (operation.type === "remove_relationship" && !relationshipIds.has(operation.relationship_id)) throw new Error(`Relationship does not exist: ${operation.relationship_id}`);
     if (operation.type === "add_relationship" && (!refs.has(operation.relationship.source_ref) || !refs.has(operation.relationship.target_ref))) throw new Error(`Relationship ${operation.id} references an unknown element.`);
   }
+  for (const layout of proposal.layout_suggestions) {
+    const unknown = layout.element_refs.find((ref) => !refs.has(ref));
+    if (unknown) throw new Error(`Layout ${layout.id} references an unknown element: ${unknown}`);
+  }
   return true;
 }
 
@@ -81,4 +89,9 @@ export function selectMaterializedOperations(patch, selectedIds) {
     }
   }
   return chosen.map(({ semantic_operation_id, ...operation }) => operation);
+}
+
+export function selectMaterializedLayouts(patch, selectedIds) {
+  const selected = new Set(selectedIds);
+  return (patch.layouts ?? []).filter((layout) => selected.has(layout.id));
 }

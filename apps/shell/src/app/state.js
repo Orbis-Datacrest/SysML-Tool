@@ -11,11 +11,11 @@ export function createInitialState(storage = globalThis.localStorage, media = gl
     selectedHistoryVersion: "current",
     settingsOpen: false,
     validationExpanded: readStorage("sysml.validationExpanded") !== "false",
+    aiAdvisorTask: readStorage("sysml.aiAdvisorTask") === "review" ? "review" : "generate",
     paletteExpanded: {
       common: readStorage("sysml.paletteExpanded.common") !== "false",
       diagramSpecific: readStorage("sysml.paletteExpanded.diagramSpecific") !== "false"
     },
-    aiAdvisorTask: readStorage("sysml.aiAdvisorTask") === "review" ? "review" : "generate",
     versionHistory: [],
     baselines: [],
     auditHistory: [],

@@ -165,6 +165,31 @@ export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SI
   });
 }
 
+export function layoutElementsByStrategy(elements, selectedIds, strategy, canvas, grid = GRID_SIZE, relationships = []) {
+  const ids = selectedIds.length ? selectedIds : elements.map((node) => node.id);
+  if (strategy === "grid") {
+    autoLayoutElements(elements, ids, canvas, grid, []);
+    return;
+  }
+  if (strategy === "radial") {
+    const selected = elements.filter((node) => ids.includes(node.id) && !node.locked);
+    if (!selected.length) return;
+    const left = Math.min(...selected.map((node) => node.x));
+    const right = Math.max(...selected.map((node) => node.x + node.width));
+    const top = Math.min(...selected.map((node) => node.y));
+    const centerX = Math.max(grid * 10, (left + right) / 2);
+    const centerY = Math.max(grid * 10, top + 260);
+    const radius = Math.max(180, selected.length * 42);
+    selected.sort((a, b) => a.name.localeCompare(b.name)).forEach((node, index) => {
+      const angle = -Math.PI / 2 + (index * Math.PI * 2) / selected.length;
+      node.x = clamp(snap(centerX + Math.cos(angle) * radius - node.width / 2, grid), 0, canvas.width - node.width);
+      node.y = clamp(snap(centerY + Math.sin(angle) * radius - node.height / 2, grid), 0, canvas.height - node.height);
+    });
+    return;
+  }
+  autoLayoutElements(elements, ids, canvas, grid, relationships);
+}
+
 export function snapLinesForMove(elements, selectedIds, movingBounds, tolerance = 6) {
   const selected = new Set(selectedIds);
   const guides = [];

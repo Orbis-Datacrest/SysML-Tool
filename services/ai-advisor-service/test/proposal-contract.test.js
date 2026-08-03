@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiContext } from "../src/contextBuilder.js";
-import { materializeSemanticProposal, selectMaterializedOperations, validateProposalReferences } from "../src/layoutEngine.js";
+import { materializeSemanticProposal, selectMaterializedLayouts, selectMaterializedOperations, validateProposalReferences } from "../src/layoutEngine.js";
 import { validateAiProposal } from "../src/proposalContract.js";
 
 const baseProposal = () => ({
@@ -43,6 +43,7 @@ test("deterministic layout materializes coordinates only after semantic validati
   assert.equal(typeof patch.operations[0].element.x, "number");
   assert.equal(semantic.operations[0].element.x, undefined);
   assert.equal(selectMaterializedOperations(patch, ["add_customer"]).length, 1);
+  assert.deepEqual(selectMaterializedLayouts(patch, ["layout"])[0].element_ids, ["class_generated"]);
 });
 
 test("relationship acceptance requires its proposed endpoint operation", () => {
