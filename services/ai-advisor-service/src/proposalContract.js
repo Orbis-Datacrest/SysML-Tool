@@ -6,6 +6,34 @@ const ALLOWED_RELATIONSHIP_KINDS = new Set(relationshipKinds);
 const OPERATION_TYPES = new Set(["add_element", "update_element", "remove_element", "add_relationship", "remove_relationship"]);
 const LAYOUT_STRATEGIES = new Set(["flow", "hierarchical", "grid", "radial"]);
 const forbiddenGeometry = new Set(["x", "y", "width", "height", "left", "top", "points", "waypoints", "sourceAnchor", "targetAnchor"]);
+const layoutRequestPattern = /\b(arrange|align|alignment|layout|organize|organise|tidy|spacing|overlap|professional|readab(?:le|ility)|clean\s*(?:up)?)\b/i;
+const semanticChangePattern = /\b(add|create|delete|remove|rename|change|update|connect|relationship|attribute|operation|port|requirement)\b/i;
+
+export function isLayoutOnlyAiRequest(request = "") { const value = String(request).trim(); return layoutRequestPattern.test(value) && !semanticChangePattern.test(value); }
+
+export function normalizeAiProposalForRequest(raw, request = "") {
+  if (!isLayoutOnlyAiRequest(request) || !raw || typeof raw !== "object") return raw;
+  const validStrategies = new Set(["flow", "hierarchical", "grid", "radial"]);
+  const layouts = Array.isArray(raw.layout_suggestions) ? raw.layout_suggestions.filter((item) => item && typeof item.id === "string" && validStrategies.has(item.strategy) && Array.isArray(item.element_refs) && typeof item.rationale === "string") : [];
+  return { ...raw, summary: typeof raw.summary === "string" && raw.summary.trim() ? raw.summary : "Arrange the diagram into a clear professional structure.", assumptions: Array.isArray(raw.assumptions) ? raw.assumptions : [], clarification_questions: [], comments: [], operations: [], layout_suggestions: layouts.length ? layouts : [{ id: "layout_professional", strategy: "hierarchical", element_refs: [], rationale: "Arrange the complete diagram into readable relationship layers with consistent spacing." }] };
+}
+
+export function normalizeAiProposalForDiagram(raw, diagram = {}) {
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.operations)) return raw;
+  const existingElements = new Set((diagram.elements ?? []).map(({ id }) => id)); const existingRelationships = new Set((diagram.relationships ?? []).map(({ id }) => id)); const declaredRefs = new Set(existingElements); const aliases = new Map();
+  (diagram.elements ?? []).forEach(({ id, name }) => { aliases.set(String(id).toLowerCase(), id); if (name) aliases.set(String(name).trim().toLowerCase(), id); });
+  raw.operations.forEach((operation) => { if (operation?.type === "add_element" && typeof operation.element?.ref === "string" && operation.element.ref.trim()) { declaredRefs.add(operation.element.ref); aliases.set(operation.element.ref.trim().toLowerCase(), operation.element.ref); if (operation.element.name) aliases.set(String(operation.element.name).trim().toLowerCase(), operation.element.ref); } });
+  const canonicalRef = (value) => typeof value === "string" ? (aliases.get(value.trim().toLowerCase()) ?? value.trim()) : value; const skipped = [];
+  const operations = raw.operations.map((operation) => operation?.type === "add_relationship" ? { ...operation, relationship: { ...operation.relationship, source_ref: canonicalRef(operation.relationship?.source_ref), target_ref: canonicalRef(operation.relationship?.target_ref) } } : operation).filter((operation, index) => {
+    if (!operation || typeof operation !== "object") { skipped.push(index); return false; }
+    if (operation.type === "add_relationship") { const source = operation.relationship?.source_ref; const target = operation.relationship?.target_ref; const valid = typeof source === "string" && source.trim() && typeof target === "string" && target.trim() && declaredRefs.has(source) && declaredRefs.has(target); if (!valid) skipped.push(operation.id ?? index); return valid; }
+    if (["update_element", "remove_element"].includes(operation.type) && !existingElements.has(operation.target_id)) { skipped.push(operation.id ?? index); return false; }
+    if (operation.type === "remove_relationship" && !existingRelationships.has(operation.relationship_id)) { skipped.push(operation.id ?? index); return false; }
+    return true;
+  });
+  const layoutSuggestions = Array.isArray(raw.layout_suggestions) ? raw.layout_suggestions.map((layout) => ({ ...layout, element_refs: Array.isArray(layout?.element_refs) ? layout.element_refs.filter((ref) => declaredRefs.has(ref)) : [] })) : [];
+  return { ...raw, operations, layout_suggestions: layoutSuggestions, assumptions: [...(Array.isArray(raw.assumptions) ? raw.assumptions : []), ...(skipped.length ? [`Skipped ${skipped.length} incomplete AI operation${skipped.length === 1 ? "" : "s"} with unresolved element references.`] : [])].slice(0, 12) };
+}
 
 export const aiProposalJsonSchema = {
   type: "object",

@@ -220,6 +220,9 @@
 .canvas-toolbar button, .canvas-toolbar select { flex: 0 0 auto; height: 28px; min-height: 28px; padding: 0 7px; white-space: nowrap; line-height: normal; }
 .canvas-toolbar button { display: inline-flex; align-items: center; justify-content: center; }
 .canvas-toolbar select { width: auto; max-width: 190px; }
+#auto-layout { border-color: color-mix(in srgb, var(--accent-2), var(--line) 55%); color: var(--accent-2); font-weight: 750; }
+#ai-layout { border-color: color-mix(in srgb, #a879ff, var(--line) 45%); color: color-mix(in srgb, #a879ff, var(--ink) 20%); font-weight: 750; }
+#layout-direction { max-width: 112px; }
 .toolbar-separator { width: 1px; margin: 2px; background: var(--line); }
 .zoom-level { display: inline-grid; min-width: 52px; place-items: center; padding-right: 7px; padding-left: 7px; color: var(--muted); font-size: 11px; }
 .canvas-toolbar button:disabled { cursor: not-allowed; opacity: .38; }
@@ -287,6 +290,10 @@
 .node-compartment.collapsed { flex: 0 0 24px; min-height: 24px; padding-bottom: 0; }
 .canvas-context-menu { position: fixed; z-index: 60; display: grid; width: min(206px, calc(100vw - 16px)); max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); padding: 6px; border: 1px solid var(--border-strong); border-radius: 9px; overflow-y: auto; background: var(--surface-elevated); box-shadow: 0 18px 45px var(--shadow-color); }
 .canvas-context-menu button { display: flex; justify-content: space-between; border: 0; padding: 8px 9px; background: transparent; text-align: left; }
+.context-menu-heading { padding: 5px 9px 2px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.context-command-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 2px 5px 5px; }
+.context-command-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.canvas-context-menu .context-command-grid button { justify-content: center; padding: 6px; border: 1px solid var(--line); border-radius: 4px; }
 .canvas-context-menu button:hover { background: var(--surface-control-hover); }
 .canvas-context-menu .context-danger { color: var(--danger); }
 .canvas-context-menu .context-danger:hover { background: var(--danger-surface); }

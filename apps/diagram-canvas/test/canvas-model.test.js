@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, isColorInputValue, layoutElementsByStrategy, minimapViewport, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
+import { alignElements, applyElementStyle, autoLayoutElements, canvasScrollFromMinimap, distributeElements, expandGroupedSelection, groupElements, isColorInputValue, layoutElementsByStrategy, minimapViewport, moveSelection, nodesInRect, normalizeColor, placeWithoutOverlap, removeElements, reorderElements, resolveSelectionOverlap, snapLinesForMove, ungroupElements } from "../src/canvas-model.js";
 
 function node(id, x, y, width = 100, height = 60) {
   return { id, kind: "class", name: id, x, y, width, height, properties: {} };
@@ -108,6 +108,27 @@ test("auto-layout uses relationship direction to create readable layers", () => 
   assert.ok(source.x < target.x);
   assert.equal(target.x, peer.x);
   assert.notEqual(target.y, peer.y);
+});
+
+test("top-to-bottom layout follows relationships without overlap", () => {
+  const elements = [node("root", 20, 20, 180, 90), node("left", 20, 20, 120, 140), node("right", 20, 20, 220, 70)];
+  autoLayoutElements(elements, [], { width: 1400, height: 1000 }, 20, [{ source_id: "root", target_id: "left" }, { source_id: "root", target_id: "right" }], "top-to-bottom");
+  assert.ok(elements[0].y < elements[1].y && elements[0].y < elements[2].y);
+  assert.ok(elements[1].x + elements[1].width <= elements[2].x || elements[2].x + elements[2].width <= elements[1].x);
+});
+
+test("auto-layout is deterministic and preserves locks and model identity", () => {
+  const elements = [node("a", 0, 0, 140, 80), { ...node("locked", 40, 40), locked: true }, node("b", 0, 0, 190, 120)]; const relationships = [{ id: "rel", kind: "satisfy", source_id: "a", target_id: "b" }]; const locked = structuredClone(elements[1]);
+  autoLayoutElements(elements, [], { width: 1200, height: 900 }, 20, relationships); const once = structuredClone(elements); autoLayoutElements(elements, [], { width: 1200, height: 900 }, 20, relationships);
+  assert.deepEqual(elements, once); assert.deepEqual(elements[1], locked); assert.equal(relationships[0].kind, "satisfy");
+});
+
+test("placement, completed moves, and large layouts prevent overlap", () => {
+  const existing = [node("existing", 100, 100, 180, 120)]; const added = node("added", 120, 120, 180, 120); placeWithoutOverlap(added, existing, { width: 800, height: 600 }, 20);
+  assert.equal(added.x < 280 && added.x + added.width > 100 && added.y < 220 && added.y + added.height > 100, false);
+  const moved = [node("fixed", 200, 200, 160, 100), node("moving", 220, 220, 160, 100)]; assert.equal(resolveSelectionOverlap(moved, ["moving"], { width: 900, height: 700 }, 20), true);
+  const elements = Array.from({ length: 18 }, (_, index) => node(`n${index}`, 390, 290, 110, 70)); autoLayoutElements(elements, [], { width: 900, height: 700 }, 20);
+  for (let a = 0; a < elements.length; a += 1) for (let b = a + 1; b < elements.length; b += 1) assert.equal(elements[a].x < elements[b].x + elements[b].width && elements[a].x + elements[a].width > elements[b].x && elements[a].y < elements[b].y + elements[b].height && elements[a].y + elements[a].height > elements[b].y, false);
 });
 
 test("AI layout strategies rearrange geometry without changing model content", () => {

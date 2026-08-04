@@ -1,3 +1,5 @@
+import { layoutDiagram, nearestFreePosition, rectanglesOverlap } from "./layout/diagramLayout.js";
+
 export const GRID_SIZE = 20;
 export const MIN_NODE_WIDTH = 100;
 export const MIN_NODE_HEIGHT = 60;
@@ -74,6 +76,18 @@ export function moveSelection(elements, selectedIds, originals, dx, dy, canvas, 
   }
 }
 
+export function placeWithoutOverlap(node, elements, canvas, grid = GRID_SIZE, padding = GRID_SIZE) {
+  const position = nearestFreePosition(node, elements.filter((item) => item.id !== node.id), canvas, { grid, padding }); node.x = position.x; node.y = position.y; return position;
+}
+
+export function resolveSelectionOverlap(elements, selectedIds, canvas, grid = GRID_SIZE, padding = GRID_SIZE) {
+  const selectedSet = new Set(selectedIds); const moving = elements.filter((node) => selectedSet.has(node.id) && !node.locked); const fixed = elements.filter((node) => !selectedSet.has(node.id));
+  if (!moving.length || !moving.some((node) => fixed.some((item) => rectanglesOverlap(node, item, padding)))) return false;
+  const bounds = selectionBounds(moving, moving.map(({ id }) => id)); const proxy = { id: "selection", x: bounds.left, y: bounds.top, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top };
+  const position = nearestFreePosition(proxy, fixed, canvas, { grid, padding }); const dx = position.x - bounds.left; const dy = position.y - bounds.top;
+  moving.forEach((node) => { node.x += dx; node.y += dy; }); return true;
+}
+
 export function alignElements(elements, selectedIds, alignment) {
   const selected = elements.filter((node) => selectedIds.includes(node.id) && !node.locked);
   if (selected.length < 2) return;
@@ -107,62 +121,8 @@ export function distributeElements(elements, selectedIds, axis) {
   }
 }
 
-export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SIZE, relationships = []) {
-  const selected = elements.filter((node) => (selectedIds.length ? selectedIds.includes(node.id) : true) && !node.locked);
-  if (!selected.length) return;
-  const selectedSet = new Set(selected.map((node) => node.id));
-  const edges = relationships.filter((item) => selectedSet.has(item.source_id) && selectedSet.has(item.target_id) && item.source_id !== item.target_id);
-  if (edges.length) {
-    const incoming = new Map(selected.map((node) => [node.id, 0]));
-    const outgoing = new Map(selected.map((node) => [node.id, []]));
-    edges.forEach((edge) => {
-      incoming.set(edge.target_id, incoming.get(edge.target_id) + 1);
-      outgoing.get(edge.source_id).push(edge.target_id);
-    });
-    const layer = new Map();
-    const queue = selected.filter((node) => incoming.get(node.id) === 0).map((node) => node.id);
-    if (!queue.length) queue.push(selected[0].id);
-    queue.forEach((id) => layer.set(id, 0));
-    while (queue.length) {
-      const id = queue.shift();
-      for (const targetId of outgoing.get(id)) {
-        layer.set(targetId, Math.max(layer.get(targetId) ?? 0, (layer.get(id) ?? 0) + 1));
-        incoming.set(targetId, incoming.get(targetId) - 1);
-        if (incoming.get(targetId) === 0) queue.push(targetId);
-      }
-    }
-    selected.forEach((node) => { if (!layer.has(node.id)) layer.set(node.id, Math.max(0, ...layer.values()) + 1); });
-    const groups = new Map();
-    selected.forEach((node) => {
-      const index = layer.get(node.id);
-      if (!groups.has(index)) groups.set(index, []);
-      groups.get(index).push(node);
-    });
-    const left = Math.max(grid * 2, Math.min(...selected.map((node) => node.x)));
-    const top = Math.max(grid * 2, Math.min(...selected.map((node) => node.y)));
-    const columnWidth = Math.max(...selected.map((node) => node.width)) + grid * 4;
-    for (const [column, nodes] of [...groups.entries()].sort(([a], [b]) => a - b)) {
-      let y = top;
-      nodes.sort((a, b) => a.y - b.y || a.name.localeCompare(b.name));
-      for (const node of nodes) {
-        node.x = clamp(snap(left + column * columnWidth, grid), 0, canvas.width - node.width);
-        node.y = clamp(snap(y, grid), 0, canvas.height - node.height);
-        y += node.height + grid * 3;
-      }
-    }
-    return;
-  }
-  const columns = Math.max(1, Math.ceil(Math.sqrt(selected.length * 1.35)));
-  const maxWidth = Math.max(...selected.map((node) => node.width));
-  const maxHeight = Math.max(...selected.map((node) => node.height));
-  const left = Math.max(grid, Math.min(...selected.map((node) => node.x)));
-  const top = Math.max(grid, Math.min(...selected.map((node) => node.y)));
-  selected.forEach((node, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    node.x = clamp(snap(left + column * (maxWidth + grid * 3), grid), 0, canvas.width - node.width);
-    node.y = clamp(snap(top + row * (maxHeight + grid * 3), grid), 0, canvas.height - node.height);
-  });
+export function autoLayoutElements(elements, selectedIds, canvas, grid = GRID_SIZE, relationships = [], direction = "left-to-right") {
+  return layoutDiagram(elements, relationships, { selectedIds, canvas, grid, direction });
 }
 
 export function layoutElementsByStrategy(elements, selectedIds, strategy, canvas, grid = GRID_SIZE, relationships = []) {

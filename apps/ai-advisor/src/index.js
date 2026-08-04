@@ -3,7 +3,7 @@ import { applyPatch, createId } from "/packages/model-core/src/index.js";
 import { layoutElementsByStrategy } from "/apps/diagram-canvas/src/canvas-model.js";
 import { buildAiContext } from "/services/ai-advisor-service/src/contextBuilder.js";
 import { materializeSemanticProposal, selectMaterializedLayouts, selectMaterializedOperations, validateProposalReferences } from "/services/ai-advisor-service/src/layoutEngine.js";
-import { validateAiProposal } from "/services/ai-advisor-service/src/proposalContract.js";
+import { normalizeAiProposalForDiagram, normalizeAiProposalForRequest, validateAiProposal } from "/services/ai-advisor-service/src/proposalContract.js";
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
@@ -19,6 +19,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
   let turns = [];
   let draft = "";
   let busy = false;
+  let pendingMessage = "Preparing a recommendation…";
   let disposed = false;
   let requestSequence = 0;
 
@@ -76,7 +77,7 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
         ${turns.length ? turns.map((turn) => turn.role === "user"
           ? `<div class="ai-bubble ai-bubble-user">${escapeHtml(turn.text)}</div>`
           : renderAssistantTurn(turn)).join("") : `<p class="ai-empty">Ask for a diagram, or describe the change you want, in plain language.</p>`}
-        ${busy ? `<div class="ai-bubble ai-bubble-assistant ai-bubble-pending">Thinking…</div>` : ""}
+        ${busy ? `<div class="ai-bubble ai-bubble-assistant ai-bubble-pending">${escapeHtml(pendingMessage)}</div>` : ""}
       </div>
       <footer class="ai-compose">
         <textarea id="ai-prompt" maxlength="6000" placeholder="Ask me anything…" aria-label="Message AI advisor">${escapeHtml(draft)}</textarea>
@@ -150,16 +151,20 @@ registerMfe("ai-advisor", (element, { state, bus, api, setDiagram }) => {
       draft = "";
       const sequence = ++requestSequence;
       const diagramId = state.diagram.id;
+      pendingMessage = state.aiAdvisorTask === "review"
+        ? "Reviewing the active diagram and preparing concrete recommendations…"
+        : `Designing a complete recommended ${prompt.replace(/^(?:please\s+)?(?:create|generate|design|build|make)\s+/i, "").slice(0, 90) || "diagram"} with elements, details, and relationships…`;
       busy = true; emitPreview(); render();
       try {
         const context = buildAiContext({
           task: state.aiAdvisorTask, prompt, diagram: state.diagram, selectedElementIds: state.selectedElementIds,
-          repository: state.modelRepository, history
+          repository: state.aiAdvisorTask === "review" ? state.modelRepository : {}, history: history.slice(-4)
         });
         const response = await api.request("/api/ai", { method: "POST", body: JSON.stringify({ context }) });
         if (disposed || sequence !== requestSequence) return;
         if (state.diagram?.id !== diagramId) throw new Error("The active tab changed while AI was responding. Nothing was applied.");
-        const validated = validateAiProposal(response.proposal ?? response, state.diagram.type);
+        const normalized = normalizeAiProposalForDiagram(normalizeAiProposalForRequest(response.proposal ?? response, prompt), state.diagram);
+        const validated = validateAiProposal(normalized, state.diagram.type);
         validateProposalReferences(state.diagram, validated);
         const patch = materializeSemanticProposal(state.diagram, validated, createId);
         const preselected = [

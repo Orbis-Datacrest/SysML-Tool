@@ -1,8 +1,8 @@
 import { registerMfe } from "../../../packages/ui/src/moduleRegistry.js";
 import { elementKinds, isPaletteItemAllowed, validateRelationshipCompatibility } from "../../../packages/model-core/src/index.js";
 import {
-  MIN_NODE_HEIGHT, MIN_NODE_WIDTH, alignElements, autoLayoutElements, canvasScrollFromMinimap, clamp, distributeElements, expandGroupedSelection,
-  groupElements, isColorInputValue, moveSelection, nodesInRect, normalizeColor, removeElements, reorderElements,
+  MIN_NODE_HEIGHT, MIN_NODE_WIDTH, alignElements, autoLayoutElements, canvasScrollFromMinimap, clamp, distributeElements, expandGroupedSelection, layoutElementsByStrategy,
+  groupElements, isColorInputValue, moveSelection, nodesInRect, normalizeColor, placeWithoutOverlap, removeElements, reorderElements, resolveSelectionOverlap,
   minimapViewport, selectionBounds, snap, snapLinesForMove, ungroupElements
 } from "./canvas-model.js";
 import { anchorPoint, nearestAnchor, pointAlongRoute, relationshipRoute, routeOrthogonal, routeToJumpPath, routeToPath, segments } from "./connector-routing.js";
@@ -12,6 +12,9 @@ import {
 } from "./config/canvasConfig.js";
 import { defaultNameFor, defaultPropertiesFor, defaultSizeFor, nodeLabel } from "./editing/elementFactory.js";
 import { createNodeRenderer } from "./rendering/createNodeRenderer.js";
+import { analyzeLayoutQuality } from "./layout/layoutQuality.js";
+import { buildAiContext } from "../../../services/ai-advisor-service/src/contextBuilder.js";
+import { normalizeAiProposalForDiagram, normalizeAiProposalForRequest, validateAiProposal } from "../../../services/ai-advisor-service/src/proposalContract.js";
 import { createScopedStyles } from "../../../packages/ui/src/scopedStyles.js";
 import { CommentComposer, CommentPin, CommentThread } from "./comments/commentComponents.js";
 import { buildCommentThreads, commentAnchor, commentToolCanWrite, floatingCommentPosition } from "./comments/commentState.js";
@@ -74,7 +77,7 @@ function renderColorControl({ value, label, styleProperty = "", relationshipProp
   </span>`;
 }
 
-registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft }) => {
+registerMfe("diagram-canvas", (element, { state, bus, api, setDiagram, undoDiagram, redoDiagram, updateDiagramDraft }) => {
   const mountedDiagramId = state.diagram?.id;
   const lifecycle = new AbortController();
   const runtimeStyles = createScopedStyles(element, "diagram-canvas");
@@ -116,6 +119,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
   let commentActionError = "";
   let retryCommentAction = null;
   let aiPreview = null;
+  let aiLayoutBusy = false;
   let lastPresenceSent = 0;
   const performUndo = typeof undoDiagram === "function" ? undoDiagram : () => bus.emit("history:undo");
   const performRedo = typeof redoDiagram === "function" ? redoDiagram : () => bus.emit("history:redo");
@@ -683,6 +687,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <span class="context-separator"></span>
       ${selected.length > 1 && !completeSingleGroup ? `<button data-command="group" role="menuitem">Group <kbd>Ctrl+G</kbd></button>` : ""}
       ${selectedGroups.size ? `<button data-command="ungroup" role="menuitem">Ungroup <kbd>⇧Ctrl+G</kbd></button>` : ""}
+      ${selected.length > 1 ? `<span class="context-separator" role="separator"></span><span class="context-menu-heading">Align</span><div class="context-command-grid"><button data-command="align-left" role="menuitem">Left</button><button data-command="align-center" role="menuitem">Center</button><button data-command="align-right" role="menuitem">Right</button><button data-command="align-top" role="menuitem">Top</button><button data-command="align-middle" role="menuitem">Middle</button><button data-command="align-bottom" role="menuitem">Bottom</button></div>${selected.length > 2 ? `<span class="context-menu-heading">Distribute</span><div class="context-command-grid two"><button data-command="distribute-horizontal" role="menuitem">Horizontal</button><button data-command="distribute-vertical" role="menuitem">Vertical</button></div>` : ""}` : ""}
       <button data-command="lock" role="menuitem">${allLocked ? "Unlock" : "Lock"}</button>
       <button data-command="forward" role="menuitem">Bring Forward</button><button data-command="backward" role="menuitem">Bring Backward</button>
     </div>`;
@@ -826,6 +831,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
       <span class="toolbar-separator"></span><button id="zoom-out" title="Zoom out" aria-label="Zoom out" ${zoom <= ZOOM.minimum ? "disabled" : ""}>−</button><button id="zoom-reset" title="Reset zoom" aria-label="Reset zoom to 100%" class="zoom-level ${zoom === 1 ? "active" : ""}" ${zoom === 1 ? "disabled" : ""}>${Math.round(zoom * 100)}%</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in" ${zoom >= ZOOM.maximum ? "disabled" : ""}>+</button>
       <button id="fit-diagram" title="Fit diagram" aria-label="Fit diagram in canvas">Fit</button><button id="fit-selection" title="Fit selection" aria-label="Fit selected elements in canvas" ${selectedIds().length ? "" : "disabled"}>Fit sel</button>
       <button id="select-all" class="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length ? "active" : ""}" title="Select all elements" aria-label="Select all elements" aria-pressed="${diagram.elements.length > 0 && selectedIds().length === diagram.elements.length}" ${diagram.elements.length ? "" : "disabled"}>Select all</button>
+      <span class="toolbar-separator"></span><button id="auto-layout" title="Organize connected elements, remove overlaps, and reroute connectors" aria-label="Auto Layout" ${diagram.elements.length ? "" : "disabled"}>Auto Layout</button><button id="ai-layout" title="Use AI topology analysis and professional automatic arrangement" aria-label="AI Arrange" ${diagram.elements.length && !aiLayoutBusy ? "" : "disabled"}>${aiLayoutBusy ? "Analyzing…" : "AI Arrange"}</button><select id="layout-direction" title="Auto-layout direction" aria-label="Auto-layout direction"><option value="left-to-right" ${(diagram.metadata?.layoutDirection ?? "left-to-right") === "left-to-right" ? "selected" : ""}>Left → right</option><option value="top-to-bottom" ${diagram.metadata?.layoutDirection === "top-to-bottom" ? "selected" : ""}>Top → bottom</option></select>
       <button id="comment-tool" class="${state.selectedTool?.type === "comment" ? "active" : ""}" title="Place a comment on an element or the canvas" aria-label="Comment tool" aria-pressed="${state.selectedTool?.type === "comment"}" ${commentToolCanWrite(collaboration) ? "" : "disabled"}>Comment</button>
       ${collaboration.loading ? `<span class="comment-sync-status" role="status">Loading comments…</span>` : ""}
       ${collaboration.error ? `<button id="comment-retry-sync" class="comment-sync-error" title="${escapeHtml(collaboration.error)}">Retry comments</button>` : ""}
@@ -929,6 +935,32 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     element.querySelector("#zoom-out").addEventListener("click", () => setZoom(Math.round((zoom - 0.1) * 10) / 10));
     element.querySelector("#zoom-reset").addEventListener("click", () => setZoom(1));
     element.querySelector("#fit-diagram").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram)));
+    element.querySelector("#auto-layout").addEventListener("click", () => {
+      const direction = element.querySelector("#layout-direction").value;
+      mutate((next) => { next.metadata = { ...(next.metadata ?? {}), layoutDirection: direction }; autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20, next.relationships, direction); });
+      requestAnimationFrame(() => fitToBounds(diagramBounds(state.diagram, selectedIds())));
+    });
+    element.querySelector("#ai-layout").addEventListener("click", async () => {
+      if (aiLayoutBusy || !state.diagram?.elements.length) return;
+      const diagramId = state.diagram.id; const quality = analyzeLayoutQuality(state.diagram.elements, state.diagram.relationships); aiLayoutBusy = true; render(); let strategy = "hierarchical";
+      try {
+        const aiRequest = "Analyze and arrange this diagram into a professional layout with readable relationship layers and preserved model semantics.";
+        const context = buildAiContext({ task: "review", prompt: aiRequest, diagram: state.diagram, selectedElementIds: selectedIds(), repository: state.modelRepository, validation: { layout_quality: quality } });
+        const response = await api.request("/api/ai", { method: "POST", body: JSON.stringify({ context }) });
+        if (state.diagram?.id !== diagramId) throw new Error("The active tab changed while AI was analyzing the layout.");
+        const normalized = normalizeAiProposalForDiagram(normalizeAiProposalForRequest(response.proposal ?? response, aiRequest), state.diagram);
+        const proposal = validateAiProposal(normalized, state.diagram.type); strategy = proposal.layout_suggestions[0]?.strategy ?? strategy;
+        if (strategy === "radial" && quality.relationship_count) strategy = "hierarchical";
+        bus.emit("toast", `AI selected ${strategy} organization.`);
+      } catch (error) { bus.emit("toast", `AI analysis unavailable; professional local arrangement applied. ${error.message}`); }
+      if (state.diagram?.id === diagramId) {
+        const direction = strategy === "hierarchical" ? "top-to-bottom" : quality.suggested_direction;
+        mutate((next) => { next.metadata = { ...(next.metadata ?? {}), layoutDirection: direction, lastLayoutStrategy: strategy }; if (strategy === "grid" || strategy === "radial") layoutElementsByStrategy(next.elements, selectedIds(), strategy, CANVAS, gridSize || 20, next.relationships); else autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20, next.relationships, direction); });
+        requestAnimationFrame(() => fitToBounds(diagramBounds(state.diagram, selectedIds())));
+      }
+      aiLayoutBusy = false; render();
+    });
+    element.querySelector("#layout-direction").addEventListener("change", (event) => setCanvasMetadata({ layoutDirection: event.target.value }));
     element.querySelector("#fit-selection").addEventListener("click", () => fitToBounds(diagramBounds(state.diagram, selectedIds())));
     element.querySelector("#select-all").addEventListener("click", () => setSelection(state.diagram.elements.map((node) => node.id)));
     element.querySelector("#keyboard-help").addEventListener("click", () => setShortcutHelpOpen(!shortcutHelpOpen));
@@ -1220,6 +1252,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     if (unchanged) { render(); return; }
     const next = structuredClone(state.diagram);
     applyEditedText(next, nodeId, section, value);
+    resolveSelectionOverlap(next.elements, [nodeId], CANVAS, gridSize || 20);
     setDiagram(next, true, historySnapshot);
   }
 
@@ -1392,6 +1425,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
         if (duplicate.groupId) { if (!groupMap.has(duplicate.groupId)) groupMap.set(duplicate.groupId, id("group")); duplicate.groupId = groupMap.get(duplicate.groupId); }
         next.elements.push(duplicate); newIds.push(duplicate.id);
       }
+      resolveSelectionOverlap(next.elements, newIds, CANVAS, gridSize || 20);
       for (const relationship of storedRelationships) {
         if (!idMap.has(relationship.source_id) || !idMap.has(relationship.target_id)) continue;
         const duplicate = structuredClone(relationship);
@@ -1419,7 +1453,7 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     }
     if (command?.startsWith("align-")) { mutate((next) => alignElements(next.elements, selectedIds(), command.replace("align-", ""))); return; }
     if (command === "distribute-horizontal" || command === "distribute-vertical") { mutate((next) => distributeElements(next.elements, selectedIds(), command.replace("distribute-", ""))); return; }
-    if (command === "auto-layout") { mutate((next) => autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20, next.relationships)); return; }
+    if (command === "auto-layout") { mutate((next) => autoLayoutElements(next.elements, selectedIds(), CANVAS, gridSize || 20, next.relationships, next.metadata?.layoutDirection ?? "left-to-right")); return; }
     if (command === "copy") { copySelection(); render(); return; }
     if (command === "duplicate") { copySelection(); duplicateSelection(); return; }
     if (command === "cut") copySelection();
@@ -1608,7 +1642,10 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     paletteHover = null;
     pointerDrag = null;
     element.classList.remove("drag-target-active");
-    mutate((next) => next.elements.push({ id: nodeId, kind, ...(["class", "block"].includes(kind) ? { variant: structuralVariant } : {}), name: textPreset ? label : defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, ...(textPreset ? { style: textPreset } : {}), properties: defaultPropertiesFor(kind, next, structuralVariant) }));
+    mutate((next) => {
+      const node = { id: nodeId, kind, ...(["class", "block"].includes(kind) ? { variant: structuralVariant } : {}), name: textPreset ? label : defaultNameFor(kind), x: clamp(snap(point.x - size.width / 2), 0, CANVAS.width - size.width), y: clamp(snap(point.y - size.height / 2), 0, CANVAS.height - size.height), ...size, ...(textPreset ? { style: textPreset } : {}), properties: defaultPropertiesFor(kind, next, structuralVariant) };
+      placeWithoutOverlap(node, next.elements, CANVAS, gridSize || 20); next.elements.push(node);
+    });
     setSelection([nodeId]);
     return true;
   }
@@ -1725,6 +1762,8 @@ registerMfe("diagram-canvas", (element, { state, bus, setDiagram, undoDiagram, r
     }
     if (completedGesture.changed && completedGesture.diagramBefore) {
       const completed = structuredClone(state.diagram);
+      if (completedGesture.type === "move") resolveSelectionOverlap(completed.elements, completedGesture.ids, CANVAS, gridSize || 20);
+      if (completedGesture.type === "resize") resolveSelectionOverlap(completed.elements, [completedGesture.id], CANVAS, gridSize || 20);
       state.diagram = completedGesture.diagramBefore;
       gesture = null; snapGuides = [];
       setDiagram(completed);

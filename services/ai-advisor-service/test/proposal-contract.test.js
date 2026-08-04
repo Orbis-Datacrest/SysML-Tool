@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAiContext } from "../src/contextBuilder.js";
 import { materializeSemanticProposal, selectMaterializedLayouts, selectMaterializedOperations, validateProposalReferences } from "../src/layoutEngine.js";
-import { validateAiProposal } from "../src/proposalContract.js";
+import { isLayoutOnlyAiRequest, normalizeAiProposalForDiagram, normalizeAiProposalForRequest, validateAiProposal } from "../src/proposalContract.js";
 
 const baseProposal = () => ({
   summary: "Add a domain class",
@@ -61,4 +61,16 @@ test("proposal references must resolve against the diagram or declared temporary
   const proposal = baseProposal();
   proposal.operations.push({ id: "bad_link", type: "add_relationship", rationale: "Invalid target.", relationship: { ref: "link", kind: "association", source_ref: "existing", target_ref: "missing", label: "", properties: {}, stereotypes: [] } });
   assert.throws(() => validateProposalReferences(diagram, validateAiProposal(proposal, "uml-class")), /unknown element/);
+});
+
+test("layout requests discard malformed semantic operations", () => {
+  const raw = baseProposal(); raw.operations = [{ id: "bad", type: "add_relationship", rationale: "Unrequested", relationship: { ref: "link", kind: "association", source_ref: "existing", target_ref: "", label: "", properties: {}, stereotypes: [] } }]; raw.layout_suggestions = [];
+  const request = "arrange this diagram into professional alignment"; assert.equal(isLayoutOnlyAiRequest(request), true);
+  const proposal = validateAiProposal(normalizeAiProposalForRequest(raw, request), "uml-class"); assert.deepEqual(proposal.operations, []); assert.equal(proposal.layout_suggestions[0].strategy, "hierarchical");
+});
+
+test("generation repairs aliases and skips unresolved relationship endpoints", () => {
+  const raw = baseProposal(); raw.operations.push({ id: "valid", type: "add_relationship", rationale: "Valid", relationship: { ref: "valid", kind: "association", source_ref: "Existing Class", target_ref: "Customer", label: "", properties: {}, stereotypes: [] } }, { id: "bad", type: "add_relationship", rationale: "Broken", relationship: { ref: "bad", kind: "association", source_ref: "customer", target_ref: "layout_ProfessionalAlignment", label: "", properties: {}, stereotypes: [] } });
+  const normalized = normalizeAiProposalForDiagram(raw, { elements: [{ id: "existing", name: "Existing Class" }], relationships: [] }); const proposal = validateAiProposal(normalized, "uml-class");
+  assert.deepEqual(proposal.operations.map(({ id }) => id), ["add_customer", "valid"]); assert.equal(proposal.operations[1].relationship.source_ref, "existing"); assert.equal(proposal.operations[1].relationship.target_ref, "customer");
 });
