@@ -61,6 +61,24 @@ projects, or user data. The API must return the proposal object described by
 `services/ai-advisor-service/src/proposalContract.js`, either directly or under
 a `proposal` property.
 
+## Deploy to Vercel
+
+The repository includes `vercel.json`, a static build output in `public/`, and
+the serverless `POST /api/ai` function. Import the repository with its root as
+the Vercel project root. The output directory is already configured.
+
+Configure these Vercel environment variables for the desired environments:
+
+```text
+AI_API_KEY=your-provider-key
+AI_API_URL=https://api.openai.com/v1/responses
+AI_MODEL=gpt-4o-mini
+```
+
+Only `AI_API_KEY` is required. Never expose it through a `VITE_`, `PUBLIC_`, or
+similar browser-visible variable. Project data remains in browser
+`localStorage`; use JSON export for durable backups and transfer.
+
 ## Browser storage
 
 The workspace key is `model-studio.workspace.v1`. History is bounded to 100

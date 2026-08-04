@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 
 const required = [
   "apps/shell/public/index.html",
@@ -14,4 +14,13 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log("Build check passed. Static MFEs and vertical-slice services are ready.");
+const output = "public";
+rmSync(output, { recursive: true, force: true });
+mkdirSync(output, { recursive: true });
+cpSync("apps/shell/public/index.html", `${output}/index.html`);
+cpSync("apps", `${output}/apps`, { recursive: true, filter: (source) => !source.includes("/test/") && !source.endsWith("/test") && !source.endsWith("package.json") });
+cpSync("packages", `${output}/packages`, { recursive: true, filter: (source) => !source.includes("/test/") && !source.endsWith("/test") && !source.endsWith("package.json") });
+mkdirSync(`${output}/services/ai-advisor-service`, { recursive: true });
+cpSync("services/ai-advisor-service/src", `${output}/services/ai-advisor-service/src`, { recursive: true });
+
+console.log("Build passed. Static application emitted to public/ for Vercel and other static hosts.");

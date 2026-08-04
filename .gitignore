@@ -2,5 +2,6 @@ node_modules/
 .data/
 .env
 dist/
+public/
 coverage/
 *.log
